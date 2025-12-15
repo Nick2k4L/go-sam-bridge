@@ -2,12 +2,14 @@ module github.com/go-i2p/go-sam-bridge
 
 go 1.24.4
 
-require github.com/go-i2p/go-i2cp v0.0.0-20190716135428-6d41bed718b0
+require (
+	github.com/go-i2p/common v0.0.6
+	github.com/go-i2p/crypto v0.0.5
+	github.com/go-i2p/go-i2cp v0.0.0-20190716135428-6d41bed718b0
+)
 
 require (
 	filippo.io/edwards25519 v1.1.0 // indirect
-	github.com/go-i2p/common v0.0.6 // indirect
-	github.com/go-i2p/crypto v0.0.5 // indirect
 	github.com/go-i2p/logger v0.0.1 // indirect
 	github.com/oklog/ulid/v2 v2.1.1 // indirect
 	github.com/samber/lo v1.51.0 // indirect
@@ -22,3 +24,7 @@ require (
 )
 
 replace github.com/go-i2p/go-i2cp => ../../../github.com/go-i2p/go-i2cp
+
+replace github.com/go-i2p/go-streaming => ../../../github.com/go-i2p/go-streaming
+
+replace github.com/go-i2p/go-datagramss => ../../../github.com/go-i2p/go-datagramss

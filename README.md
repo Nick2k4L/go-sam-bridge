@@ -26,7 +26,7 @@ This bridge is built on pure Go I2P libraries:
 
 - **[go-i2cp](https://github.com/go-i2p/go-i2cp)** - I2CP protocol implementation for tunnel management
 - **[go-streaming](https://github.com/go-i2p/go-streaming)** - Reliable ordered streams over I2P
-- **[go-datagram](https://github.com/go-i2p/go-datagram)** - Datagram support (repliable, raw, and new formats)
+- **[go-datagrams](https://github.com/go-i2p/go-datagrams)** - Datagram support (repliable, raw, and new formats)
 
 Unlike other SAM implementations that require a separate I2P router, `go-sam-bridge` directly implements I2P networking in Go.
 
@@ -103,7 +103,7 @@ Areas where help is needed:
 
 - Core session implementations (see [PLAN.md](PLAN.md))
 - Protocol command handlers
-- Integration with go-i2cp/go-streaming/go-datagram
+- Integration with go-i2cp/go-streaming/go-datagrams
 - Testing against Java I2P and i2pd routers
 - Documentation and examples
 
