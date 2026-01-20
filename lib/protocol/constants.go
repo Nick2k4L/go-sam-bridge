@@ -1,56 +1,62 @@
-// Package protocol defines SAM protocol constants, command structures, and response builders.
+// Package protocol implements SAM v3.0-3.3 command parsing and response building.
+// See SAMv3.md for the complete protocol specification.
 package protocol
 
-// SAM protocol version constants
+// SAM Protocol Verbs per SAM 3.0-3.3 specification.
 const (
-	// MinSAMVersion is the minimum supported SAM protocol version
-	MinSAMVersion = "3.0"
-	// MaxSAMVersion is the maximum supported SAM protocol version
-	MaxSAMVersion = "3.3"
+	VerbHello    = "HELLO"
+	VerbSession  = "SESSION"
+	VerbStream   = "STREAM"
+	VerbDatagram = "DATAGRAM"
+	VerbRaw      = "RAW"
+	VerbDest     = "DEST"
+	VerbNaming   = "NAMING"
+	VerbPing     = "PING"
+	VerbPong     = "PONG"
+	VerbAuth     = "AUTH"
+	VerbQuit     = "QUIT"
+	VerbStop     = "STOP"
+	VerbExit     = "EXIT"
+	VerbHelp     = "HELP"
 )
 
-// SAM command types
+// SAM Protocol Actions per SAM 3.0-3.3 specification.
 const (
-	CmdHello         = "HELLO"
-	CmdSessionCreate = "SESSION CREATE"
-	CmdSessionAdd    = "SESSION ADD"
-	CmdSessionRemove = "SESSION REMOVE"
-	CmdStreamConnect = "STREAM CONNECT"
-	CmdStreamAccept  = "STREAM ACCEPT"
-	CmdStreamForward = "STREAM FORWARD"
-	CmdDatagramSend  = "DATAGRAM SEND"
-	CmdRawSend       = "RAW SEND"
-	CmdDestGenerate  = "DEST GENERATE"
-	CmdNamingLookup  = "NAMING LOOKUP"
-	CmdPing          = "PING"
-	CmdPong          = "PONG"
-	CmdQuit          = "QUIT"
-	CmdStop          = "STOP"
-	CmdExit          = "EXIT"
+	ActionVersion  = "VERSION"
+	ActionReply    = "REPLY"
+	ActionStatus   = "STATUS"
+	ActionCreate   = "CREATE"
+	ActionAdd      = "ADD"
+	ActionRemove   = "REMOVE"
+	ActionConnect  = "CONNECT"
+	ActionAccept   = "ACCEPT"
+	ActionForward  = "FORWARD"
+	ActionSend     = "SEND"
+	ActionReceived = "RECEIVED"
+	ActionGenerate = "GENERATE"
+	ActionLookup   = "LOOKUP"
+	ActionEnable   = "ENABLE"
+	ActionDisable  = "DISABLE"
 )
 
-// SAM result codes as defined in the specification
+// SAM Result Codes per SAM 3.0-3.3 specification.
+// These are returned in the RESULT= field of responses.
 const (
-	ResultOK                = "OK"
-	ResultCantReachPeer     = "CANT_REACH_PEER"
-	ResultDuplicatedDest    = "DUPLICATED_DEST"
-	ResultDuplicatedID      = "DUPLICATED_ID"
-	ResultI2PError          = "I2P_ERROR"
-	ResultInvalidKey        = "INVALID_KEY"
-	ResultInvalidID         = "INVALID_ID"
-	ResultKeyNotFound       = "KEY_NOT_FOUND"
-	ResultPeerNotFound      = "PEER_NOT_FOUND"
-	ResultTimeout           = "TIMEOUT"
-	ResultAlreadyAccepting  = "ALREADY_ACCEPTING"
-	ResultNoVersion         = "NOVERSION"
-	ResultBadSyntax         = "BADSYNTAX"
-	ResultBadOptions        = "BADOPTIONS"
-	ResultBadSessionStyle   = "BADSESSIONSTYLE"
-	ResultNotEnoughRam      = "NOTENOUGHRAM"
-	ResultSessionAlreadySet = "SESSIONALREADYSET"
+	ResultOK               = "OK"
+	ResultCantReachPeer    = "CANT_REACH_PEER"
+	ResultDuplicatedDest   = "DUPLICATED_DEST"
+	ResultDuplicatedID     = "DUPLICATED_ID"
+	ResultI2PError         = "I2P_ERROR"
+	ResultInvalidKey       = "INVALID_KEY"
+	ResultInvalidID        = "INVALID_ID"
+	ResultKeyNotFound      = "KEY_NOT_FOUND"
+	ResultPeerNotFound     = "PEER_NOT_FOUND"
+	ResultTimeout          = "TIMEOUT"
+	ResultNoVersion        = "NOVERSION"
+	ResultLeasesetNotFound = "LEASESET_NOT_FOUND"
 )
 
-// Session style constants
+// SAM Session Styles per SAM 3.0-3.3 specification.
 const (
 	StyleStream    = "STREAM"
 	StyleDatagram  = "DATAGRAM"
@@ -58,42 +64,61 @@ const (
 	StyleDatagram2 = "DATAGRAM2"
 	StyleDatagram3 = "DATAGRAM3"
 	StylePrimary   = "PRIMARY"
+	StyleMaster    = "MASTER" // Deprecated, alias for PRIMARY (pre-0.9.47)
 )
 
-// Default I2CP and crypto options as recommended in PLAN.md
+// SAM Default Ports per SAM specification.
 const (
-	// DefaultSignatureType is Ed25519 (type 7)
-	DefaultSignatureType = 7
-	// DefaultTunnelQuantity balances performance and resource usage
-	DefaultTunnelQuantity = 3
+	DefaultSAMPort      = 7656
+	DefaultDatagramPort = 7655
+	DefaultI2CPPort     = 7654
 )
 
-// DefaultEncryptionTypes provides ECIES with ElGamal fallback
+// Port validation constants.
+const (
+	MinPort = 0
+	MaxPort = 65535
+)
+
+// Protocol validation constants for RAW sessions.
+const (
+	MinProtocol        = 0
+	MaxProtocol        = 255
+	DefaultRawProtocol = 18
+)
+
+// DisallowedRawProtocols are I2CP protocols that cannot be used with RAW sessions
+// per SAMv3.md specification. These are reserved for TCP(6), UDP(17), and
+// internal I2P protocols (19, 20).
+var DisallowedRawProtocols = []int{6, 17, 19, 20}
+
+// Signature Types per I2P specification.
+// All clients should use SigTypeEd25519 (7) for new destinations.
+const (
+	SigTypeDSA_SHA1          = 0 // Default (deprecated, do not use)
+	SigTypeECDSA_SHA256_P256 = 1
+	SigTypeECDSA_SHA384_P384 = 2
+	SigTypeECDSA_SHA512_P521 = 3
+	SigTypeRSA_SHA256_2048   = 4
+	SigTypeRSA_SHA384_3072   = 5
+	SigTypeRSA_SHA512_4096   = 6
+	SigTypeEd25519           = 7 // Recommended
+	SigTypeEd25519ph         = 8
+)
+
+// DefaultSignatureType is Ed25519 per SAM specification recommendation.
+const DefaultSignatureType = SigTypeEd25519
+
+// DefaultEncryptionTypes specifies ECIES-X25519 with ElGamal fallback.
+// This ensures compatibility with older routers while preferring modern crypto.
 var DefaultEncryptionTypes = []int{4, 0}
 
-// Protocol numbers for routing (from SAM 3.2+)
-const (
-	// ProtocolTCP is reserved for streaming (protocol 6)
-	ProtocolTCP = 6
-	// ProtocolUDP is commonly used for datagrams (protocol 17)
-	ProtocolUDP = 17
-	// Disallowed protocols: 6 (TCP/streaming), 17 (UDP), 19, 20
-)
+// DefaultTunnelQuantity is the recommended tunnel count for balanced performance
+// between Java I2P (default 2) and i2pd (default 5).
+const DefaultTunnelQuantity = 3
 
-// DisallowedProtocols lists protocol numbers that cannot be used with RAW sessions
-var DisallowedProtocols = []int{6, 17, 19, 20}
-
-// MTU size limits for different datagram types
+// SAM Version constants.
 const (
-	// MaxRawDatagramSize is the maximum size for raw datagrams (SAM spec)
-	MaxRawDatagramSize = 32768
-	// MaxRepliableDatagramSize is the maximum size for repliable datagrams
-	MaxRepliableDatagramSize = 31744
-	// RecommendedDatagramSize is the recommended safe size (11KB)
-	RecommendedDatagramSize = 11264
-)
-
-// Default UDP port for datagram operations
-const (
-	DefaultDatagramUDPPort = 7655
+	SAMVersionMin = "3.0"
+	SAMVersionMax = "3.3"
 )

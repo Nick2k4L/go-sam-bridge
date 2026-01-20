@@ -1,32 +1,39 @@
-// Package protocol provides SAM protocol command structures.
 package protocol
 
 // Command represents a parsed SAM protocol command.
-// Commands follow the format: VERB [ARGS...] [KEY=VALUE ...]
+// Per SAMv3.md, commands follow the format:
 //
-// Examples:
+//	VERB [ACTION] [KEY=VALUE]...
 //
-//	HELLO VERSION MIN=3.0 MAX=3.3
-//	SESSION CREATE STYLE=STREAM ID=mySession
-//	DEST GENERATE SIGNATURE_TYPE=7
+// All SAM messages are sent on a single line terminated by newline.
 type Command struct {
-	// Verb is the primary command (e.g., "HELLO", "SESSION")
+	// Verb is the primary command (e.g., "HELLO", "SESSION", "STREAM").
 	Verb string
 
-	// Action is the subcommand (e.g., "CREATE", "LOOKUP")
-	// Empty for commands without actions (e.g., "PING")
+	// Action is the secondary command (e.g., "VERSION", "CREATE", "CONNECT").
+	// May be empty for commands like PING per SAM 3.2.
 	Action string
 
-	// Options contains key=value pairs from the command
-	// Keys are case-sensitive per SAM spec
+	// Options contains key-value pairs from the command.
+	// Keys are case-sensitive per SAM specification.
+	// Empty values are allowed per SAM 3.2 (KEY, KEY=, KEY="").
 	Options map[string]string
 
-	// RawLine is the original unparsed command line
-	RawLine string
+	// Raw is the original command line for debugging and logging.
+	Raw string
 }
 
-// Get retrieves an option value by key.
-// Returns empty string if key doesn't exist.
+// NewCommand creates a new Command with initialized Options map.
+func NewCommand(verb, action string) *Command {
+	return &Command{
+		Verb:    verb,
+		Action:  action,
+		Options: make(map[string]string),
+	}
+}
+
+// Get returns an option value, or empty string if not present.
+// Use Has() to distinguish between missing keys and empty values.
 func (c *Command) Get(key string) string {
 	if c.Options == nil {
 		return ""
@@ -34,18 +41,22 @@ func (c *Command) Get(key string) string {
 	return c.Options[key]
 }
 
-// GetOr retrieves an option value by key with a default fallback.
-func (c *Command) GetOr(key, defaultValue string) string {
+// GetOrDefault returns an option value, or the default if not present.
+// Note: If the key is present but empty, the empty value is returned,
+// not the default. Use Has() to check for key presence.
+func (c *Command) GetOrDefault(key, defaultVal string) string {
 	if c.Options == nil {
-		return defaultValue
+		return defaultVal
 	}
-	if val, ok := c.Options[key]; ok {
-		return val
+	if v, ok := c.Options[key]; ok {
+		return v
 	}
-	return defaultValue
+	return defaultVal
 }
 
-// Has checks if an option key exists.
+// Has returns true if the option key is present (even if empty).
+// Per SAM 3.2, empty option values such as KEY, KEY=, or KEY=""
+// may be allowed, implementation dependent.
 func (c *Command) Has(key string) bool {
 	if c.Options == nil {
 		return false
@@ -54,12 +65,10 @@ func (c *Command) Has(key string) bool {
 	return ok
 }
 
-// FullCommand returns the verb and action combined.
-// For "SESSION CREATE", returns "SESSION CREATE".
-// For "PING", returns "PING".
-func (c *Command) FullCommand() string {
-	if c.Action == "" {
-		return c.Verb
+// Set adds or updates an option value.
+func (c *Command) Set(key, value string) {
+	if c.Options == nil {
+		c.Options = make(map[string]string)
 	}
-	return c.Verb + " " + c.Action
+	c.Options[key] = value
 }

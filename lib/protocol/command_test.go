@@ -4,63 +4,187 @@ import (
 	"testing"
 )
 
-func TestCommand_Get(t *testing.T) {
-	cmd := &Command{
-		Options: map[string]string{"KEY": "value"},
-	}
+func TestNewCommand(t *testing.T) {
+	cmd := NewCommand("SESSION", "CREATE")
 
-	if got := cmd.Get("KEY"); got != "value" {
-		t.Errorf("Get(KEY) = %v, want value", got)
+	if cmd.Verb != "SESSION" {
+		t.Errorf("Verb = %q, want %q", cmd.Verb, "SESSION")
 	}
-
-	if got := cmd.Get("MISSING"); got != "" {
-		t.Errorf("Get(MISSING) = %v, want empty", got)
+	if cmd.Action != "CREATE" {
+		t.Errorf("Action = %q, want %q", cmd.Action, "CREATE")
+	}
+	if cmd.Options == nil {
+		t.Error("Options should not be nil")
 	}
 }
 
-func TestCommand_GetOr(t *testing.T) {
-	cmd := &Command{
-		Options: map[string]string{"KEY": "value"},
+func TestCommand_Get(t *testing.T) {
+	tests := []struct {
+		name     string
+		options  map[string]string
+		key      string
+		expected string
+	}{
+		{
+			name:     "existing key",
+			options:  map[string]string{"ID": "test123"},
+			key:      "ID",
+			expected: "test123",
+		},
+		{
+			name:     "missing key",
+			options:  map[string]string{"ID": "test123"},
+			key:      "STYLE",
+			expected: "",
+		},
+		{
+			name:     "empty value",
+			options:  map[string]string{"SILENT": ""},
+			key:      "SILENT",
+			expected: "",
+		},
+		{
+			name:     "nil options",
+			options:  nil,
+			key:      "ID",
+			expected: "",
+		},
 	}
 
-	if got := cmd.GetOr("KEY", "default"); got != "value" {
-		t.Errorf("GetOr(KEY) = %v, want value", got)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := &Command{Options: tt.options}
+			got := cmd.Get(tt.key)
+			if got != tt.expected {
+				t.Errorf("Get(%q) = %q, want %q", tt.key, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestCommand_GetOrDefault(t *testing.T) {
+	tests := []struct {
+		name       string
+		options    map[string]string
+		key        string
+		defaultVal string
+		expected   string
+	}{
+		{
+			name:       "existing key",
+			options:    map[string]string{"ID": "test123"},
+			key:        "ID",
+			defaultVal: "default",
+			expected:   "test123",
+		},
+		{
+			name:       "missing key uses default",
+			options:    map[string]string{"ID": "test123"},
+			key:        "STYLE",
+			defaultVal: "STREAM",
+			expected:   "STREAM",
+		},
+		{
+			name:       "empty value returns empty not default",
+			options:    map[string]string{"SILENT": ""},
+			key:        "SILENT",
+			defaultVal: "true",
+			expected:   "",
+		},
+		{
+			name:       "nil options uses default",
+			options:    nil,
+			key:        "ID",
+			defaultVal: "default",
+			expected:   "default",
+		},
 	}
 
-	if got := cmd.GetOr("MISSING", "default"); got != "default" {
-		t.Errorf("GetOr(MISSING) = %v, want default", got)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := &Command{Options: tt.options}
+			got := cmd.GetOrDefault(tt.key, tt.defaultVal)
+			if got != tt.expected {
+				t.Errorf("GetOrDefault(%q, %q) = %q, want %q",
+					tt.key, tt.defaultVal, got, tt.expected)
+			}
+		})
 	}
 }
 
 func TestCommand_Has(t *testing.T) {
-	cmd := &Command{
-		Options: map[string]string{"KEY": ""},
-	}
-
-	if !cmd.Has("KEY") {
-		t.Error("Has(KEY) should be true")
-	}
-
-	if cmd.Has("MISSING") {
-		t.Error("Has(MISSING) should be false")
-	}
-}
-
-func TestCommand_FullCommand(t *testing.T) {
 	tests := []struct {
-		verb   string
-		action string
-		want   string
+		name     string
+		options  map[string]string
+		key      string
+		expected bool
 	}{
-		{"SESSION", "CREATE", "SESSION CREATE"},
-		{"PING", "", "PING"},
-		{"DEST", "GENERATE", "DEST GENERATE"},
+		{
+			name:     "existing key with value",
+			options:  map[string]string{"ID": "test123"},
+			key:      "ID",
+			expected: true,
+		},
+		{
+			name:     "existing key with empty value",
+			options:  map[string]string{"SILENT": ""},
+			key:      "SILENT",
+			expected: true,
+		},
+		{
+			name:     "missing key",
+			options:  map[string]string{"ID": "test123"},
+			key:      "STYLE",
+			expected: false,
+		},
+		{
+			name:     "nil options",
+			options:  nil,
+			key:      "ID",
+			expected: false,
+		},
 	}
 
 	for _, tt := range tests {
-		cmd := &Command{Verb: tt.verb, Action: tt.action}
-		if got := cmd.FullCommand(); got != tt.want {
-			t.Errorf("FullCommand() = %v, want %v", got, tt.want)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := &Command{Options: tt.options}
+			got := cmd.Has(tt.key)
+			if got != tt.expected {
+				t.Errorf("Has(%q) = %v, want %v", tt.key, got, tt.expected)
+			}
+		})
 	}
+}
+
+func TestCommand_Set(t *testing.T) {
+	t.Run("set on initialized options", func(t *testing.T) {
+		cmd := NewCommand("SESSION", "CREATE")
+		cmd.Set("ID", "test123")
+
+		if cmd.Get("ID") != "test123" {
+			t.Error("Set failed to add option")
+		}
+	})
+
+	t.Run("set on nil options", func(t *testing.T) {
+		cmd := &Command{}
+		cmd.Set("ID", "test123")
+
+		if cmd.Options == nil {
+			t.Error("Set should initialize Options")
+		}
+		if cmd.Get("ID") != "test123" {
+			t.Error("Set failed to add option")
+		}
+	})
+
+	t.Run("overwrite existing value", func(t *testing.T) {
+		cmd := NewCommand("SESSION", "CREATE")
+		cmd.Set("ID", "old")
+		cmd.Set("ID", "new")
+
+		if cmd.Get("ID") != "new" {
+			t.Error("Set failed to overwrite option")
+		}
+	})
 }

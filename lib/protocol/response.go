@@ -1,166 +1,193 @@
 package protocol
 
 import (
-	"fmt"
 	"strings"
 )
 
-// Response represents a SAM protocol response message.
-// All responses follow the format: VERB [ACTION] RESULT=value [KEY=VALUE ...]
+// Response builds SAM protocol responses.
+// Per SAMv3.md, responses follow the format:
+//
+//	VERB [ACTION] [KEY=VALUE]...
+//
+// All responses are terminated by a newline character.
 type Response struct {
-	verb    string
-	action  string
-	options map[string]string
+	Verb    string
+	Action  string
+	Options []string // Pre-formatted KEY=VALUE pairs
 }
 
-// NewResponse creates a new response with the given verb.
-// For simple responses like "HELLO REPLY" or "DEST REPLY", verb should be "HELLO" or "DEST".
+// NewResponse creates a new response builder with the given verb.
 func NewResponse(verb string) *Response {
 	return &Response{
-		verb:    verb,
-		options: make(map[string]string),
+		Verb:    verb,
+		Options: make([]string, 0),
 	}
 }
 
-// WithAction sets the action portion of the response (e.g., "REPLY", "STATUS").
+// WithAction sets the response action (e.g., REPLY, STATUS).
 func (r *Response) WithAction(action string) *Response {
-	r.action = action
+	r.Action = action
 	return r
 }
 
-// WithResult sets the RESULT field (required for most responses).
+// WithResult adds the RESULT option with the given result code.
+// Common result codes: OK, I2P_ERROR, DUPLICATED_ID, etc.
 func (r *Response) WithResult(result string) *Response {
-	r.options["RESULT"] = result
+	return r.WithOption("RESULT", result)
+}
+
+// WithMessage adds the MESSAGE option, typically used with error responses.
+// The message is automatically quoted if it contains spaces.
+func (r *Response) WithMessage(msg string) *Response {
+	return r.WithOption("MESSAGE", msg)
+}
+
+// WithDestination adds the DESTINATION option with a Base64 destination.
+func (r *Response) WithDestination(dest string) *Response {
+	return r.WithOption("DESTINATION", dest)
+}
+
+// WithVersion adds the VERSION option.
+func (r *Response) WithVersion(version string) *Response {
+	return r.WithOption("VERSION", version)
+}
+
+// WithOption adds a key-value option to the response.
+// Values containing spaces, quotes, or backslashes are automatically quoted.
+func (r *Response) WithOption(key, value string) *Response {
+	formatted := formatOption(key, value)
+	r.Options = append(r.Options, formatted)
 	return r
 }
 
-// With adds a key=value pair to the response options.
-func (r *Response) With(key, value string) *Response {
-	r.options[key] = value
-	return r
-}
-
-// WithMessage adds a MESSAGE field (typically used with error responses).
-// The message will be quoted if it contains spaces or special characters.
-func (r *Response) WithMessage(message string) *Response {
-	r.options["MESSAGE"] = message
-	return r
-}
-
-// String formats the response as a SAM protocol message line.
-// Format: VERB [ACTION] KEY=VALUE [KEY=VALUE ...]
-// Values containing spaces or quotes are automatically quoted and escaped.
+// String formats the response as a SAM protocol line with newline terminator.
 func (r *Response) String() string {
 	var parts []string
-
-	// Add verb and action
-	if r.action != "" {
-		parts = append(parts, r.verb, r.action)
-	} else {
-		parts = append(parts, r.verb)
+	parts = append(parts, r.Verb)
+	if r.Action != "" {
+		parts = append(parts, r.Action)
 	}
-
-	// Add options in consistent order: RESULT first, then alphabetically
-	if result, ok := r.options["RESULT"]; ok {
-		parts = append(parts, formatOption("RESULT", result))
-	}
-
-	// Add remaining options in alphabetical order
-	for key, value := range r.options {
-		if key != "RESULT" {
-			parts = append(parts, formatOption(key, value))
-		}
-	}
-
+	parts = append(parts, r.Options...)
 	return strings.Join(parts, " ") + "\n"
 }
 
-// Bytes returns the response as bytes (UTF-8 encoded per SAM 3.2+).
+// Bytes returns the response as a byte slice for writing to connections.
 func (r *Response) Bytes() []byte {
 	return []byte(r.String())
 }
 
-// formatOption formats a key=value pair, quoting the value if necessary.
-// Quotes and backslashes in values are escaped per SAM 3.2+ specification.
+// formatOption formats a key-value pair, quoting the value if necessary.
 func formatOption(key, value string) string {
-	// Check if value needs quoting (contains space, quote, equals, or backslash)
-	needsQuoting := strings.ContainsAny(value, " \"=\\")
-
-	if needsQuoting {
-		// Escape existing backslashes first, then quotes
-		escaped := strings.ReplaceAll(value, "\\", "\\\\")
-		escaped = strings.ReplaceAll(escaped, "\"", "\\\"")
-		return fmt.Sprintf("%s=\"%s\"", key, escaped)
+	if needsQuoting(value) {
+		value = `"` + escapeValue(value) + `"`
 	}
-
-	return fmt.Sprintf("%s=%s", key, value)
+	return key + "=" + value
 }
 
-// Helper functions for common response types
+// needsQuoting returns true if the value contains characters that require quoting.
+// Per SAM 3.2, values with spaces, tabs, quotes, or backslashes must be quoted.
+func needsQuoting(s string) bool {
+	return strings.ContainsAny(s, " \t\"\\")
+}
 
-// HelloReply creates a HELLO REPLY response.
-func HelloReply(result, version string) *Response {
-	r := NewResponse("HELLO").WithAction("REPLY").WithResult(result)
-	if version != "" {
-		r.With("VERSION", version)
+// escapeValue escapes quotes and backslashes in a string.
+// Per SAM 3.2, double quotes are escaped with backslash, and
+// backslashes are represented as two backslashes.
+func escapeValue(s string) string {
+	// Order matters: escape backslashes first, then quotes
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "\"", "\\\"")
+	return s
+}
+
+// Helper functions to create common responses
+
+// HelloReplyOK creates a successful HELLO REPLY response with version.
+func HelloReplyOK(version string) *Response {
+	return NewResponse(VerbHello).
+		WithAction(ActionReply).
+		WithResult(ResultOK).
+		WithVersion(version)
+}
+
+// HelloReplyNoVersion creates a HELLO REPLY with NOVERSION result.
+func HelloReplyNoVersion() *Response {
+	return NewResponse(VerbHello).
+		WithAction(ActionReply).
+		WithResult(ResultNoVersion)
+}
+
+// HelloReplyError creates a HELLO REPLY with I2P_ERROR result and message.
+func HelloReplyError(message string) *Response {
+	return NewResponse(VerbHello).
+		WithAction(ActionReply).
+		WithResult(ResultI2PError).
+		WithMessage(message)
+}
+
+// SessionStatusOK creates a successful SESSION STATUS response.
+func SessionStatusOK(destination string) *Response {
+	return NewResponse(VerbSession).
+		WithAction(ActionStatus).
+		WithResult(ResultOK).
+		WithDestination(destination)
+}
+
+// SessionStatusError creates a SESSION STATUS error response.
+func SessionStatusError(result, message string) *Response {
+	return NewResponse(VerbSession).
+		WithAction(ActionStatus).
+		WithResult(result).
+		WithMessage(message)
+}
+
+// StreamStatusOK creates a successful STREAM STATUS response.
+func StreamStatusOK() *Response {
+	return NewResponse(VerbStream).
+		WithAction(ActionStatus).
+		WithResult(ResultOK)
+}
+
+// StreamStatusError creates a STREAM STATUS error response.
+func StreamStatusError(result, message string) *Response {
+	return NewResponse(VerbStream).
+		WithAction(ActionStatus).
+		WithResult(result).
+		WithMessage(message)
+}
+
+// DestReply creates a DEST REPLY response with public and private keys.
+func DestReply(publicKey, privateKey string) *Response {
+	return NewResponse(VerbDest).
+		WithAction(ActionReply).
+		WithOption("PUB", publicKey).
+		WithOption("PRIV", privateKey)
+}
+
+// NamingReplyOK creates a successful NAMING REPLY response.
+func NamingReplyOK(name, value string) *Response {
+	return NewResponse(VerbNaming).
+		WithAction(ActionReply).
+		WithResult(ResultOK).
+		WithOption("NAME", name).
+		WithOption("VALUE", value)
+}
+
+// NamingReplyNotFound creates a NAMING REPLY KEY_NOT_FOUND response.
+func NamingReplyNotFound(name string) *Response {
+	return NewResponse(VerbNaming).
+		WithAction(ActionReply).
+		WithResult(ResultKeyNotFound).
+		WithOption("NAME", name)
+}
+
+// Pong creates a PONG response with the original ping data.
+func Pong(data string) *Response {
+	if data == "" {
+		return NewResponse(VerbPong)
 	}
+	// PONG includes arbitrary text directly, not as key=value
+	r := NewResponse(VerbPong)
+	r.Options = append(r.Options, data)
 	return r
-}
-
-// SessionStatus creates a SESSION STATUS response.
-func SessionStatus(result string) *Response {
-	return NewResponse("SESSION").WithAction("STATUS").WithResult(result)
-}
-
-// StreamStatus creates a STREAM STATUS response.
-func StreamStatus(result string) *Response {
-	return NewResponse("STREAM").WithAction("STATUS").WithResult(result)
-}
-
-// DestReply creates a DEST REPLY response.
-func DestReply(pubKey, privKey string) *Response {
-	return NewResponse("DEST").
-		WithAction("REPLY").
-		WithResult(ResultOK).
-		With("PUB", pubKey).
-		With("PRIV", privKey)
-}
-
-// NamingReply creates a NAMING REPLY response.
-func NamingReply(result, name string) *Response {
-	r := NewResponse("NAMING").WithAction("REPLY").WithResult(result)
-	if name != "" {
-		r.With("NAME", name)
-	}
-	return r
-}
-
-// DatagramReceived creates a DATAGRAM RECEIVED response.
-func DatagramReceived(size int) *Response {
-	return NewResponse("DATAGRAM").
-		WithAction("RECEIVED").
-		WithResult(ResultOK).
-		With("SIZE", fmt.Sprintf("%d", size))
-}
-
-// RawReceived creates a RAW RECEIVED response.
-func RawReceived(size int) *Response {
-	return NewResponse("RAW").
-		WithAction("RECEIVED").
-		WithResult(ResultOK).
-		With("SIZE", fmt.Sprintf("%d", size))
-}
-
-// Pong creates a PONG response.
-func Pong() *Response {
-	return NewResponse("PONG")
-}
-
-// ErrorResponse creates a generic error response with MESSAGE field.
-func ErrorResponse(verb, action, result, message string) *Response {
-	r := NewResponse(verb)
-	if action != "" {
-		r.WithAction(action)
-	}
-	return r.WithResult(result).WithMessage(message)
 }
