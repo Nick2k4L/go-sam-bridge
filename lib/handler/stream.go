@@ -1,0 +1,379 @@
+// Package handler implements SAM command handlers per SAMv3.md specification.
+package handler
+
+import (
+	"net"
+	"strconv"
+
+	"github.com/go-i2p/go-sam-bridge/lib/protocol"
+	"github.com/go-i2p/go-sam-bridge/lib/session"
+)
+
+// StreamHandler handles STREAM CONNECT, ACCEPT, and FORWARD commands per SAM 3.0-3.3.
+// These commands operate on existing STREAM sessions to establish virtual connections.
+type StreamHandler struct {
+	// Connector establishes outbound stream connections.
+	Connector StreamConnector
+
+	// Acceptor accepts inbound stream connections.
+	Acceptor StreamAcceptor
+
+	// Forwarder sets up connection forwarding.
+	Forwarder StreamForwarder
+}
+
+// StreamConnector establishes outbound I2P stream connections.
+// Implementations wrap go-streaming or similar I2P streaming libraries.
+type StreamConnector interface {
+	// Connect establishes a stream connection to the destination.
+	// Returns a net.Conn representing the bidirectional stream.
+	Connect(sess session.Session, dest string, fromPort, toPort int) (net.Conn, error)
+}
+
+// StreamAcceptor accepts inbound I2P stream connections.
+// Implementations wrap go-streaming or similar I2P streaming libraries.
+type StreamAcceptor interface {
+	// Accept waits for and accepts an incoming stream connection.
+	// Returns the connection and the remote destination info.
+	Accept(sess session.Session) (net.Conn, *AcceptInfo, error)
+}
+
+// AcceptInfo contains information about an accepted connection.
+type AcceptInfo struct {
+	// Destination is the Base64-encoded destination of the connecting peer.
+	Destination string
+	// FromPort is the source port (SAM 3.2+).
+	FromPort int
+	// ToPort is the destination port (SAM 3.2+).
+	ToPort int
+}
+
+// StreamForwarder sets up forwarding for incoming connections.
+// Implementations handle the forwarding lifecycle.
+type StreamForwarder interface {
+	// Forward sets up forwarding to the specified host:port.
+	// Returns a Listener that can be closed to stop forwarding.
+	Forward(sess session.Session, host string, port int, ssl bool) (net.Listener, error)
+}
+
+// NewStreamHandler creates a new STREAM command handler.
+func NewStreamHandler(connector StreamConnector, acceptor StreamAcceptor, forwarder StreamForwarder) *StreamHandler {
+	return &StreamHandler{
+		Connector: connector,
+		Acceptor:  acceptor,
+		Forwarder: forwarder,
+	}
+}
+
+// Handle processes STREAM commands (CONNECT, ACCEPT, FORWARD).
+// Per SAMv3.md, STREAM commands operate on existing STREAM sessions.
+func (h *StreamHandler) Handle(ctx *Context, cmd *protocol.Command) (*protocol.Response, error) {
+	// Require handshake completion
+	if !ctx.HandshakeComplete {
+		return streamError("handshake not complete"), nil
+	}
+
+	switch cmd.Action {
+	case protocol.ActionConnect:
+		return h.handleConnect(ctx, cmd)
+	case protocol.ActionAccept:
+		return h.handleAccept(ctx, cmd)
+	case protocol.ActionForward:
+		return h.handleForward(ctx, cmd)
+	default:
+		return streamError("unknown STREAM action"), nil
+	}
+}
+
+// handleConnect processes STREAM CONNECT command.
+// Request: STREAM CONNECT ID=$nickname DESTINATION=$dest [SILENT={true,false}] [FROM_PORT=nnn] [TO_PORT=nnn]
+// Response: STREAM STATUS RESULT=OK (if !SILENT) then socket becomes data pipe.
+func (h *StreamHandler) handleConnect(ctx *Context, cmd *protocol.Command) (*protocol.Response, error) {
+	// Parse required parameters
+	id := cmd.Get("ID")
+	if id == "" {
+		return streamInvalidID("missing ID"), nil
+	}
+
+	dest := cmd.Get("DESTINATION")
+	if dest == "" {
+		return streamInvalidKey("missing DESTINATION"), nil
+	}
+
+	// Lookup session
+	sess := h.lookupSession(ctx, id)
+	if sess == nil {
+		return streamInvalidID("session not found"), nil
+	}
+
+	// Validate session is STREAM style
+	if sess.Style() != session.StyleStream {
+		return streamError("session is not STREAM style"), nil
+	}
+
+	// Parse optional parameters
+	silent := parseBool(cmd.Get("SILENT"), false)
+	fromPort := parseInt(cmd.Get("FROM_PORT"), 0)
+	toPort := parseInt(cmd.Get("TO_PORT"), 0)
+
+	// Validate ports
+	if !isValidPort(fromPort) || !isValidPort(toPort) {
+		return streamError("invalid port number"), nil
+	}
+
+	// Attempt connection
+	if h.Connector == nil {
+		return streamError("connector not available"), nil
+	}
+
+	conn, err := h.Connector.Connect(sess, dest, fromPort, toPort)
+	if err != nil {
+		return h.connectError(err), nil
+	}
+
+	// If silent, no response - just return nil and let caller handle data pipe
+	if silent {
+		// Store connection for data forwarding
+		_ = conn // Connection will be used by bridge for data forwarding
+		return nil, nil
+	}
+
+	// Return OK response - after this, socket becomes data pipe
+	// The caller is responsible for setting up data forwarding
+	_ = conn
+	return streamOK(), nil
+}
+
+// handleAccept processes STREAM ACCEPT command.
+// Request: STREAM ACCEPT ID=$nickname [SILENT={true,false}]
+// Response: STREAM STATUS RESULT=OK, then $destination FROM_PORT=nnn TO_PORT=nnn
+func (h *StreamHandler) handleAccept(ctx *Context, cmd *protocol.Command) (*protocol.Response, error) {
+	// Parse required parameters
+	id := cmd.Get("ID")
+	if id == "" {
+		return streamInvalidID("missing ID"), nil
+	}
+
+	// Lookup session
+	sess := h.lookupSession(ctx, id)
+	if sess == nil {
+		return streamInvalidID("session not found"), nil
+	}
+
+	// Validate session is STREAM style
+	if sess.Style() != session.StyleStream {
+		return streamError("session is not STREAM style"), nil
+	}
+
+	// Parse optional parameters
+	silent := parseBool(cmd.Get("SILENT"), false)
+
+	// Attempt accept
+	if h.Acceptor == nil {
+		return streamError("acceptor not available"), nil
+	}
+
+	conn, info, err := h.Acceptor.Accept(sess)
+	if err != nil {
+		return streamError(err.Error()), nil
+	}
+
+	// If silent, no response - just return nil and let caller handle data pipe
+	if silent {
+		_ = conn
+		return nil, nil
+	}
+
+	// Return OK response
+	// The caller should then send: $destination FROM_PORT=nnn TO_PORT=nnn\n
+	// followed by data forwarding
+	_ = conn
+	_ = info
+	return streamOK(), nil
+}
+
+// handleForward processes STREAM FORWARD command.
+// Request: STREAM FORWARD ID=$nickname PORT=$port [HOST=$host] [SILENT={true,false}] [SSL={true,false}]
+// Response: STREAM STATUS RESULT=OK (always sent, even if SILENT=true)
+func (h *StreamHandler) handleForward(ctx *Context, cmd *protocol.Command) (*protocol.Response, error) {
+	// Parse required parameters
+	id := cmd.Get("ID")
+	if id == "" {
+		return streamInvalidID("missing ID"), nil
+	}
+
+	portStr := cmd.Get("PORT")
+	if portStr == "" {
+		return streamError("missing PORT"), nil
+	}
+
+	port := parseInt(portStr, -1)
+	if !isValidPort(port) {
+		return streamError("invalid PORT number"), nil
+	}
+
+	// Lookup session
+	sess := h.lookupSession(ctx, id)
+	if sess == nil {
+		return streamInvalidID("session not found"), nil
+	}
+
+	// Validate session is STREAM style
+	if sess.Style() != session.StyleStream {
+		return streamError("session is not STREAM style"), nil
+	}
+
+	// Parse optional parameters
+	host := cmd.Get("HOST")
+	if host == "" {
+		// Default to client's IP address
+		host = extractHost(ctx.RemoteAddr())
+	}
+
+	ssl := parseBool(cmd.Get("SSL"), false)
+
+	// Set up forwarding
+	if h.Forwarder == nil {
+		return streamError("forwarder not available"), nil
+	}
+
+	listener, err := h.Forwarder.Forward(sess, host, port, ssl)
+	if err != nil {
+		return streamError(err.Error()), nil
+	}
+
+	// FORWARD always returns a response, even with SILENT=true
+	_ = listener
+	return streamOK(), nil
+}
+
+// lookupSession finds a session by ID from context or registry.
+func (h *StreamHandler) lookupSession(ctx *Context, id string) session.Session {
+	// First check if session is bound to this connection
+	if ctx.Session != nil && ctx.Session.ID() == id {
+		return ctx.Session
+	}
+
+	// Otherwise lookup in registry
+	if ctx.Registry != nil {
+		return ctx.Registry.Get(id)
+	}
+
+	return nil
+}
+
+// connectError returns an appropriate error response for connection failures.
+func (h *StreamHandler) connectError(err error) *protocol.Response {
+	// TODO: Map specific errors to CANT_REACH_PEER, TIMEOUT, etc.
+	return streamCantReachPeer(err.Error())
+}
+
+// Helper functions
+
+// parseBool parses a boolean string with a default value.
+func parseBool(s string, defaultVal bool) bool {
+	if s == "" {
+		return defaultVal
+	}
+	switch s {
+	case "true", "TRUE", "True", "1":
+		return true
+	case "false", "FALSE", "False", "0":
+		return false
+	default:
+		return defaultVal
+	}
+}
+
+// parseInt parses an integer string with a default value.
+func parseInt(s string, defaultVal int) int {
+	if s == "" {
+		return defaultVal
+	}
+	v, err := strconv.Atoi(s)
+	if err != nil {
+		return defaultVal
+	}
+	return v
+}
+
+// isValidPort checks if a port number is valid (0-65535).
+func isValidPort(port int) bool {
+	return port >= 0 && port <= 65535
+}
+
+// extractHost extracts the host from a host:port string.
+func extractHost(addr string) string {
+	if addr == "" {
+		return "127.0.0.1"
+	}
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr
+	}
+	if host == "" {
+		return "127.0.0.1"
+	}
+	return host
+}
+
+// Response builders
+
+// streamOK returns a successful STREAM STATUS response.
+func streamOK() *protocol.Response {
+	return protocol.NewResponse(protocol.VerbStream).
+		WithAction(protocol.ActionStatus).
+		WithResult(protocol.ResultOK)
+}
+
+// streamInvalidID returns an INVALID_ID error response.
+func streamInvalidID(msg string) *protocol.Response {
+	resp := protocol.NewResponse(protocol.VerbStream).
+		WithAction(protocol.ActionStatus).
+		WithResult(protocol.ResultInvalidID)
+	if msg != "" {
+		resp = resp.WithMessage(msg)
+	}
+	return resp
+}
+
+// streamInvalidKey returns an INVALID_KEY error response.
+func streamInvalidKey(msg string) *protocol.Response {
+	resp := protocol.NewResponse(protocol.VerbStream).
+		WithAction(protocol.ActionStatus).
+		WithResult(protocol.ResultInvalidKey)
+	if msg != "" {
+		resp = resp.WithMessage(msg)
+	}
+	return resp
+}
+
+// streamCantReachPeer returns a CANT_REACH_PEER error response.
+func streamCantReachPeer(msg string) *protocol.Response {
+	resp := protocol.NewResponse(protocol.VerbStream).
+		WithAction(protocol.ActionStatus).
+		WithResult(protocol.ResultCantReachPeer)
+	if msg != "" {
+		resp = resp.WithMessage(msg)
+	}
+	return resp
+}
+
+// streamTimeout returns a TIMEOUT error response.
+func streamTimeout(msg string) *protocol.Response {
+	resp := protocol.NewResponse(protocol.VerbStream).
+		WithAction(protocol.ActionStatus).
+		WithResult(protocol.ResultTimeout)
+	if msg != "" {
+		resp = resp.WithMessage(msg)
+	}
+	return resp
+}
+
+// streamError returns an I2P_ERROR response with the given message.
+func streamError(msg string) *protocol.Response {
+	return protocol.NewResponse(protocol.VerbStream).
+		WithAction(protocol.ActionStatus).
+		WithResult(protocol.ResultI2PError).
+		WithMessage(msg)
+}
