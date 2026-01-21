@@ -214,6 +214,42 @@ func TestDestHandler_Handle(t *testing.T) {
 			},
 			wantResult: protocol.ResultI2PError,
 		},
+		{
+			name: "reject OFFLINE_SIGNATURE parameter",
+			command: &protocol.Command{
+				Verb:   "DEST",
+				Action: "GENERATE",
+				Options: map[string]string{
+					"OFFLINE_SIGNATURE": "some_data",
+				},
+			},
+			manager:    &mockManager{},
+			wantResult: protocol.ResultI2PError,
+		},
+		{
+			name: "reject OFFLINE parameter",
+			command: &protocol.Command{
+				Verb:   "DEST",
+				Action: "GENERATE",
+				Options: map[string]string{
+					"OFFLINE": "true",
+				},
+			},
+			manager:    &mockManager{},
+			wantResult: protocol.ResultI2PError,
+		},
+		{
+			name: "reject TRANSIENT_KEY parameter",
+			command: &protocol.Command{
+				Verb:   "DEST",
+				Action: "GENERATE",
+				Options: map[string]string{
+					"TRANSIENT_KEY": "some_key",
+				},
+			},
+			manager:    &mockManager{},
+			wantResult: protocol.ResultI2PError,
+		},
 	}
 
 	for _, tt := range tests {

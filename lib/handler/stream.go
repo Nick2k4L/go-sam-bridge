@@ -2,6 +2,7 @@
 package handler
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
@@ -309,9 +310,34 @@ func (h *StreamHandler) lookupSession(ctx *Context, id string) session.Session {
 }
 
 // connectError returns an appropriate error response for connection failures.
+// Per SAM spec, the RESULT value may be one of:
+// - CANT_REACH_PEER: Remote peer is unreachable
+// - TIMEOUT: Connection timed out
+// - PEER_NOT_FOUND: Remote destination not found
+// - INVALID_KEY: Destination key is malformed
+// - I2P_ERROR: Other I2P-related errors
 func (h *StreamHandler) connectError(err error) *protocol.Response {
-	// TODO: Map specific errors to CANT_REACH_PEER, TIMEOUT, etc.
-	return streamCantReachPeer(err.Error())
+	// Map specific error types to SAM result codes
+	switch {
+	case errors.Is(err, util.ErrTimeout):
+		return streamTimeout(err.Error())
+	case errors.Is(err, util.ErrPeerNotFound):
+		return streamPeerNotFound(err.Error())
+	case errors.Is(err, util.ErrLeasesetNotFound):
+		return streamPeerNotFound(err.Error()) // Leaseset not found is similar to peer not found
+	case errors.Is(err, util.ErrInvalidKey):
+		return streamInvalidKey(err.Error())
+	case errors.Is(err, util.ErrCantReachPeer):
+		return streamCantReachPeer(err.Error())
+	default:
+		// Check for net timeout errors
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
+			return streamTimeout(err.Error())
+		}
+		// Default to CANT_REACH_PEER for unknown errors
+		return streamCantReachPeer(err.Error())
+	}
 }
 
 // Helper functions
@@ -399,6 +425,18 @@ func streamCantReachPeer(msg string) *protocol.Response {
 	resp := protocol.NewResponse(protocol.VerbStream).
 		WithAction(protocol.ActionStatus).
 		WithResult(protocol.ResultCantReachPeer)
+	if msg != "" {
+		resp = resp.WithMessage(msg)
+	}
+	return resp
+}
+
+// streamPeerNotFound returns a PEER_NOT_FOUND error response.
+// Per SAM spec, used when the remote destination cannot be found.
+func streamPeerNotFound(msg string) *protocol.Response {
+	resp := protocol.NewResponse(protocol.VerbStream).
+		WithAction(protocol.ActionStatus).
+		WithResult(protocol.ResultPeerNotFound)
 	if msg != "" {
 		resp = resp.WithMessage(msg)
 	}

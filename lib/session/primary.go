@@ -117,6 +117,17 @@ func (p *PrimarySessionImpl) AddSubsession(id string, style Style, opts Subsessi
 		}
 	}
 
+	// Per SAM spec: If LISTEN_PORT is not specified, default to FROM_PORT.
+	// If neither is specified, routing is based on STYLE and PROTOCOL alone.
+	if opts.ListenPort == 0 && opts.FromPort != 0 {
+		opts.ListenPort = opts.FromPort
+	}
+
+	// Per SAM spec: For RAW, if LISTEN_PROTOCOL is not specified, default to PROTOCOL.
+	if style == StyleRaw && opts.ListenProtocol == 0 && opts.Protocol != 0 {
+		opts.ListenProtocol = opts.Protocol
+	}
+
 	// Validate routing doesn't conflict
 	routingKey := p.makeRoutingKey(opts.ListenPort, opts.ListenProtocol)
 	if existing, exists := p.routingTable[routingKey]; exists {

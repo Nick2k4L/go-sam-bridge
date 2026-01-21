@@ -21,12 +21,22 @@ func NewDestHandler(manager destination.Manager) *DestHandler {
 
 // Handle processes a DEST GENERATE command.
 // Per SAMv3.md, DEST GENERATE creates a new destination keypair.
+// DEST GENERATE cannot be used to create a destination with offline signatures.
 //
 // Request: DEST GENERATE [SIGNATURE_TYPE=value]
 // Response: DEST REPLY PUB=$destination PRIV=$privkey
 //
 //	DEST REPLY RESULT=I2P_ERROR MESSAGE="..."
 func (h *DestHandler) Handle(ctx *Context, cmd *protocol.Command) (*protocol.Response, error) {
+	// Per SAM spec: DEST GENERATE cannot be used to create a destination with
+	// offline signatures. Reject any offline signature-related parameters.
+	offlineParams := []string{"OFFLINE_SIGNATURE", "OFFLINE", "TRANSIENT_KEY"}
+	for _, param := range offlineParams {
+		if cmd.Get(param) != "" {
+			return destError("DEST GENERATE cannot create offline-signed destinations"), nil
+		}
+	}
+
 	// Parse signature type option (default 0 per spec, but 7 is recommended)
 	sigType, err := parseSignatureType(cmd)
 	if err != nil {

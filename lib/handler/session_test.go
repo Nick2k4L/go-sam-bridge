@@ -565,6 +565,92 @@ func TestSessionHandler_Handle(t *testing.T) {
 			wantResult:    protocol.ResultOK,
 			wantSession:   true,
 		},
+		// Style-specific option validation tests
+		{
+			name: "STREAM rejects PORT option",
+			command: &protocol.Command{
+				Verb:   "SESSION",
+				Action: "CREATE",
+				Options: map[string]string{
+					"STYLE":       "STREAM",
+					"ID":          "stream-with-port",
+					"DESTINATION": "TRANSIENT",
+					"PORT":        "7655",
+				},
+			},
+			manager:       successManager,
+			registry:      newMockRegistry(),
+			handshakeDone: true,
+			wantResult:    protocol.ResultI2PError,
+		},
+		{
+			name: "STREAM rejects HOST option",
+			command: &protocol.Command{
+				Verb:   "SESSION",
+				Action: "CREATE",
+				Options: map[string]string{
+					"STYLE":       "STREAM",
+					"ID":          "stream-with-host",
+					"DESTINATION": "TRANSIENT",
+					"HOST":        "127.0.0.1",
+				},
+			},
+			manager:       successManager,
+			registry:      newMockRegistry(),
+			handshakeDone: true,
+			wantResult:    protocol.ResultI2PError,
+		},
+		{
+			name: "PRIMARY rejects PORT option",
+			command: &protocol.Command{
+				Verb:   "SESSION",
+				Action: "CREATE",
+				Options: map[string]string{
+					"STYLE":       "PRIMARY",
+					"ID":          "primary-with-port",
+					"DESTINATION": "TRANSIENT",
+					"PORT":        "7655",
+				},
+			},
+			manager:       successManager,
+			registry:      newMockRegistry(),
+			handshakeDone: true,
+			wantResult:    protocol.ResultI2PError,
+		},
+		{
+			name: "PRIMARY rejects FROM_PORT option",
+			command: &protocol.Command{
+				Verb:   "SESSION",
+				Action: "CREATE",
+				Options: map[string]string{
+					"STYLE":       "PRIMARY",
+					"ID":          "primary-with-fromport",
+					"DESTINATION": "TRANSIENT",
+					"FROM_PORT":   "1234",
+				},
+			},
+			manager:       successManager,
+			registry:      newMockRegistry(),
+			handshakeDone: true,
+			wantResult:    protocol.ResultI2PError,
+		},
+		{
+			name: "PRIMARY rejects PROTOCOL option",
+			command: &protocol.Command{
+				Verb:   "SESSION",
+				Action: "CREATE",
+				Options: map[string]string{
+					"STYLE":       "PRIMARY",
+					"ID":          "primary-with-protocol",
+					"DESTINATION": "TRANSIENT",
+					"PROTOCOL":    "18",
+				},
+			},
+			manager:       successManager,
+			registry:      newMockRegistry(),
+			handshakeDone: true,
+			wantResult:    protocol.ResultI2PError,
+		},
 	}
 
 	for _, tt := range tests {

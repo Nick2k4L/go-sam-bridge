@@ -76,6 +76,11 @@ func (h *SessionHandler) handleCreate(ctx *Context, cmd *protocol.Command) (*pro
 		return sessionError("ID may not contain whitespace"), nil
 	}
 
+	// Per SAM spec: Validate style-specific option restrictions
+	if err := validateStyleOptions(style, cmd); err != nil {
+		return sessionError(err.Error()), nil
+	}
+
 	// Parse destination
 	destSpec := cmd.Get("DESTINATION")
 	if destSpec == "" {
@@ -289,6 +294,10 @@ func (h *SessionHandler) createRawSession(
 //   - PORT: Forwarding port for incoming datagrams
 //   - HOST: Forwarding host (default 127.0.0.1)
 //
+// Per SAM 3.3 specification:
+//   - Offline signatures are NOT supported for DATAGRAM style
+//     (only RAW, DATAGRAM2, and DATAGRAM3 support offline signatures)
+//
 // Repliable datagrams include the sender's destination and signature,
 // enabling replies to the sender.
 func (h *SessionHandler) createDatagramSession(
@@ -298,6 +307,11 @@ func (h *SessionHandler) createDatagramSession(
 	config *session.SessionConfig,
 	cmd *protocol.Command,
 ) (*session.DatagramSessionImpl, error) {
+	// Per SAM spec: Offline signatures are not supported for DATAGRAM style
+	if dest.OfflineSignature != nil {
+		return nil, fmt.Errorf("offline signatures not supported for STYLE=DATAGRAM")
+	}
+
 	// Create the datagram session
 	datagramSession := session.NewDatagramSession(id, dest, conn, config)
 
@@ -745,6 +759,38 @@ func sessionDuplicatedDest() *protocol.Response {
 	return protocol.NewResponse(protocol.VerbSession).
 		WithAction(protocol.ActionStatus).
 		WithResult(protocol.ResultDuplicatedDest)
+}
+
+// validateStyleOptions validates that style-specific option restrictions are followed.
+// Per SAM spec:
+//   - STREAM: PORT and HOST are invalid
+//   - PRIMARY/MASTER: PORT, HOST, FROM_PORT, TO_PORT, PROTOCOL, LISTEN_PORT,
+//     LISTEN_PROTOCOL, and HEADER are invalid (apply only to subsessions)
+func validateStyleOptions(style session.Style, cmd *protocol.Command) error {
+	switch style {
+	case session.StyleStream:
+		// Per SAM spec: PORT and HOST are invalid for STREAM
+		if cmd.Get("PORT") != "" {
+			return fmt.Errorf("PORT is invalid for STYLE=STREAM")
+		}
+		if cmd.Get("HOST") != "" {
+			return fmt.Errorf("HOST is invalid for STYLE=STREAM")
+		}
+
+	case session.StylePrimary, session.StyleMaster:
+		// Per SAM spec: These options only apply to subsessions, not PRIMARY
+		disallowed := []string{
+			"PORT", "HOST", "FROM_PORT", "TO_PORT",
+			"PROTOCOL", "LISTEN_PORT", "LISTEN_PROTOCOL", "HEADER",
+		}
+		for _, opt := range disallowed {
+			if cmd.Get(opt) != "" {
+				return fmt.Errorf("%s is invalid for STYLE=PRIMARY", opt)
+			}
+		}
+	}
+
+	return nil
 }
 
 // sessionInvalidKey returns an INVALID_KEY response.
