@@ -2,6 +2,7 @@
 package handler
 
 import (
+	"fmt"
 	"net"
 	"strconv"
 
@@ -80,7 +81,10 @@ func (h *SessionHandler) Handle(ctx *Context, cmd *protocol.Command) (*protocol.
 	}
 
 	// Parse session configuration options
-	config := h.parseConfig(cmd)
+	config, err := h.parseConfig(cmd)
+	if err != nil {
+		return sessionError(err.Error()), nil
+	}
 
 	// Create the session based on style
 	newSession := session.NewBaseSession(id, style, dest, ctx.Conn, config)
@@ -168,7 +172,9 @@ func (h *SessionHandler) parseExistingDest(privKeyBase64 string) (*session.Desti
 }
 
 // parseConfig extracts session configuration from command options.
-func (h *SessionHandler) parseConfig(cmd *protocol.Command) *session.SessionConfig {
+// Per SAM 3.2+, validates ports (0-65535) and protocol (0-255, excluding 6,17,19,20).
+// Returns an error if validation fails.
+func (h *SessionHandler) parseConfig(cmd *protocol.Command) (*session.SessionConfig, error) {
 	config := session.DefaultSessionConfig()
 
 	// Parse tunnel quantities
@@ -195,29 +201,35 @@ func (h *SessionHandler) parseConfig(cmd *protocol.Command) *session.SessionConf
 		}
 	}
 
-	// Parse ports (SAM 3.2+)
+	// Parse and validate ports (SAM 3.2+)
 	if v := cmd.Get("FROM_PORT"); v != "" {
-		if port, err := strconv.Atoi(v); err == nil {
-			config.FromPort = port
+		port, err := protocol.ValidatePortString(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid FROM_PORT: %w", err)
 		}
+		config.FromPort = port
 	}
 	if v := cmd.Get("TO_PORT"); v != "" {
-		if port, err := strconv.Atoi(v); err == nil {
-			config.ToPort = port
+		port, err := protocol.ValidatePortString(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid TO_PORT: %w", err)
 		}
+		config.ToPort = port
 	}
 
-	// Parse RAW-specific options
+	// Parse and validate RAW-specific options
 	if v := cmd.Get("PROTOCOL"); v != "" {
-		if proto, err := strconv.Atoi(v); err == nil {
-			config.Protocol = proto
+		proto, err := protocol.ValidateProtocolString(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid PROTOCOL: %w", err)
 		}
+		config.Protocol = proto
 	}
 	if v := cmd.Get("HEADER"); v != "" {
 		config.HeaderEnabled = (v == "true")
 	}
 
-	return config
+	return config, nil
 }
 
 // containsWhitespace checks if a string contains any whitespace.

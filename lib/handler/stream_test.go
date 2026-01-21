@@ -255,6 +255,65 @@ func TestStreamHandler_HandleConnect(t *testing.T) {
 			registeredSess: &mockStreamSession{id: "test-session", style: session.StyleStream},
 			wantResult:     protocol.ResultI2PError,
 		},
+		{
+			name: "invalid FROM_PORT - negative",
+			cmd: &protocol.Command{Verb: "STREAM", Action: "CONNECT", Options: map[string]string{
+				"ID":          "test-session",
+				"DESTINATION": "AAAA...",
+				"FROM_PORT":   "-1",
+			}},
+			handshakeDone:  true,
+			registeredSess: &mockStreamSession{id: "test-session", style: session.StyleStream},
+			wantResult:     protocol.ResultI2PError,
+		},
+		{
+			name: "invalid FROM_PORT - non-numeric",
+			cmd: &protocol.Command{Verb: "STREAM", Action: "CONNECT", Options: map[string]string{
+				"ID":          "test-session",
+				"DESTINATION": "AAAA...",
+				"FROM_PORT":   "notaport",
+			}},
+			handshakeDone:  true,
+			registeredSess: &mockStreamSession{id: "test-session", style: session.StyleStream},
+			wantResult:     protocol.ResultI2PError,
+		},
+		{
+			name: "invalid TO_PORT - too large",
+			cmd: &protocol.Command{Verb: "STREAM", Action: "CONNECT", Options: map[string]string{
+				"ID":          "test-session",
+				"DESTINATION": "AAAA...",
+				"TO_PORT":     "70000",
+			}},
+			handshakeDone:  true,
+			registeredSess: &mockStreamSession{id: "test-session", style: session.StyleStream},
+			wantResult:     protocol.ResultI2PError,
+		},
+		{
+			name: "valid edge port 0",
+			cmd: &protocol.Command{Verb: "STREAM", Action: "CONNECT", Options: map[string]string{
+				"ID":          "test-session",
+				"DESTINATION": "AAAA...",
+				"FROM_PORT":   "0",
+				"TO_PORT":     "0",
+			}},
+			handshakeDone:  true,
+			registeredSess: &mockStreamSession{id: "test-session", style: session.StyleStream},
+			connector:      &mockStreamConnector{conn: &mockConn{}},
+			wantResult:     protocol.ResultOK,
+		},
+		{
+			name: "valid edge port 65535",
+			cmd: &protocol.Command{Verb: "STREAM", Action: "CONNECT", Options: map[string]string{
+				"ID":          "test-session",
+				"DESTINATION": "AAAA...",
+				"FROM_PORT":   "65535",
+				"TO_PORT":     "65535",
+			}},
+			handshakeDone:  true,
+			registeredSess: &mockStreamSession{id: "test-session", style: session.StyleStream},
+			connector:      &mockStreamConnector{conn: &mockConn{}},
+			wantResult:     protocol.ResultOK,
+		},
 	}
 
 	for _, tt := range tests {
@@ -461,6 +520,48 @@ func TestStreamHandler_HandleForward(t *testing.T) {
 			handshakeDone:  true,
 			registeredSess: &mockStreamSession{id: "test-session", style: session.StyleStream},
 			wantResult:     protocol.ResultI2PError,
+		},
+		{
+			name: "invalid PORT - too large",
+			cmd: &protocol.Command{Verb: "STREAM", Action: "FORWARD", Options: map[string]string{
+				"ID":   "test-session",
+				"PORT": "99999",
+			}},
+			handshakeDone:  true,
+			registeredSess: &mockStreamSession{id: "test-session", style: session.StyleStream},
+			wantResult:     protocol.ResultI2PError,
+		},
+		{
+			name: "invalid PORT - non-numeric",
+			cmd: &protocol.Command{Verb: "STREAM", Action: "FORWARD", Options: map[string]string{
+				"ID":   "test-session",
+				"PORT": "notaport",
+			}},
+			handshakeDone:  true,
+			registeredSess: &mockStreamSession{id: "test-session", style: session.StyleStream},
+			wantResult:     protocol.ResultI2PError,
+		},
+		{
+			name: "valid PORT edge 0",
+			cmd: &protocol.Command{Verb: "STREAM", Action: "FORWARD", Options: map[string]string{
+				"ID":   "test-session",
+				"PORT": "0",
+			}},
+			handshakeDone:  true,
+			registeredSess: &mockStreamSession{id: "test-session", style: session.StyleStream},
+			forwarder:      &mockStreamForwarder{listener: &mockListener{}},
+			wantResult:     protocol.ResultOK,
+		},
+		{
+			name: "valid PORT edge 65535",
+			cmd: &protocol.Command{Verb: "STREAM", Action: "FORWARD", Options: map[string]string{
+				"ID":   "test-session",
+				"PORT": "65535",
+			}},
+			handshakeDone:  true,
+			registeredSess: &mockStreamSession{id: "test-session", style: session.StyleStream},
+			forwarder:      &mockStreamForwarder{listener: &mockListener{}},
+			wantResult:     protocol.ResultOK,
 		},
 		{
 			name: "session not found",

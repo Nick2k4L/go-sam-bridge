@@ -2,6 +2,7 @@
 package handler
 
 import (
+	"fmt"
 	"net"
 	"strconv"
 
@@ -113,12 +114,15 @@ func (h *StreamHandler) handleConnect(ctx *Context, cmd *protocol.Command) (*pro
 
 	// Parse optional parameters
 	silent := parseBool(cmd.Get("SILENT"), false)
-	fromPort := parseInt(cmd.Get("FROM_PORT"), 0)
-	toPort := parseInt(cmd.Get("TO_PORT"), 0)
 
-	// Validate ports
-	if !isValidPort(fromPort) || !isValidPort(toPort) {
-		return streamError("invalid port number"), nil
+	// Parse and validate ports (SAM 3.2+)
+	fromPort, err := protocol.ValidatePortString(cmd.Get("FROM_PORT"))
+	if err != nil {
+		return streamError(fmt.Sprintf("invalid FROM_PORT: %v", err)), nil
+	}
+	toPort, err := protocol.ValidatePortString(cmd.Get("TO_PORT"))
+	if err != nil {
+		return streamError(fmt.Sprintf("invalid TO_PORT: %v", err)), nil
 	}
 
 	// Attempt connection
@@ -207,9 +211,10 @@ func (h *StreamHandler) handleForward(ctx *Context, cmd *protocol.Command) (*pro
 		return streamError("missing PORT"), nil
 	}
 
-	port := parseInt(portStr, -1)
-	if !isValidPort(port) {
-		return streamError("invalid PORT number"), nil
+	// Validate port (SAM 3.0+)
+	port, err := protocol.ValidatePortString(portStr)
+	if err != nil {
+		return streamError(fmt.Sprintf("invalid PORT: %v", err)), nil
 	}
 
 	// Lookup session

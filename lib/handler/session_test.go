@@ -332,9 +332,11 @@ func TestSessionHandler_ParseConfig(t *testing.T) {
 	handler := NewSessionHandler(&mockManager{})
 
 	tests := []struct {
-		name    string
-		options map[string]string
-		check   func(*session.SessionConfig) bool
+		name      string
+		options   map[string]string
+		wantErr   bool
+		errSubstr string
+		check     func(*session.SessionConfig) bool
 	}{
 		{
 			name:    "defaults",
@@ -364,7 +366,7 @@ func TestSessionHandler_ParseConfig(t *testing.T) {
 			},
 		},
 		{
-			name: "port options",
+			name: "valid port options",
 			options: map[string]string{
 				"FROM_PORT": "1234",
 				"TO_PORT":   "5678",
@@ -374,24 +376,106 @@ func TestSessionHandler_ParseConfig(t *testing.T) {
 			},
 		},
 		{
-			name: "RAW options",
+			name: "valid edge port 0",
 			options: map[string]string{
-				"PROTOCOL": "20",
-				"HEADER":   "true",
+				"FROM_PORT": "0",
+				"TO_PORT":   "0",
 			},
 			check: func(c *session.SessionConfig) bool {
-				return c.Protocol == 20 && c.HeaderEnabled
+				return c.FromPort == 0 && c.ToPort == 0
 			},
 		},
 		{
-			name: "invalid values ignored",
+			name: "valid edge port 65535",
 			options: map[string]string{
-				"inbound.quantity": "invalid",
-				"FROM_PORT":        "notaport",
+				"FROM_PORT": "65535",
+				"TO_PORT":   "65535",
 			},
 			check: func(c *session.SessionConfig) bool {
-				return c.InboundQuantity == 3 && c.FromPort == 0
+				return c.FromPort == 65535 && c.ToPort == 65535
 			},
+		},
+		{
+			name: "invalid FROM_PORT - negative",
+			options: map[string]string{
+				"FROM_PORT": "-1",
+			},
+			wantErr:   true,
+			errSubstr: "FROM_PORT",
+		},
+		{
+			name: "invalid FROM_PORT - too large",
+			options: map[string]string{
+				"FROM_PORT": "99999",
+			},
+			wantErr:   true,
+			errSubstr: "FROM_PORT",
+		},
+		{
+			name: "invalid FROM_PORT - non-numeric",
+			options: map[string]string{
+				"FROM_PORT": "notaport",
+			},
+			wantErr:   true,
+			errSubstr: "FROM_PORT",
+		},
+		{
+			name: "invalid TO_PORT - negative",
+			options: map[string]string{
+				"TO_PORT": "-1",
+			},
+			wantErr:   true,
+			errSubstr: "TO_PORT",
+		},
+		{
+			name: "invalid TO_PORT - too large",
+			options: map[string]string{
+				"TO_PORT": "70000",
+			},
+			wantErr:   true,
+			errSubstr: "TO_PORT",
+		},
+		{
+			name: "valid RAW protocol",
+			options: map[string]string{
+				"PROTOCOL": "18",
+				"HEADER":   "true",
+			},
+			check: func(c *session.SessionConfig) bool {
+				return c.Protocol == 18 && c.HeaderEnabled
+			},
+		},
+		{
+			name: "invalid PROTOCOL - disallowed 6 (TCP)",
+			options: map[string]string{
+				"PROTOCOL": "6",
+			},
+			wantErr:   true,
+			errSubstr: "PROTOCOL",
+		},
+		{
+			name: "invalid PROTOCOL - disallowed 17 (UDP)",
+			options: map[string]string{
+				"PROTOCOL": "17",
+			},
+			wantErr:   true,
+			errSubstr: "PROTOCOL",
+		},
+		{
+			name: "invalid PROTOCOL - too large",
+			options: map[string]string{
+				"PROTOCOL": "256",
+			},
+			wantErr:   true,
+			errSubstr: "PROTOCOL",
+		},
+		{
+			name: "invalid PROTOCOL - negative",
+			options: map[string]string{
+				"PROTOCOL": "-1",
+			},
+			wantErr:   true,
+			errSubstr: "PROTOCOL",
 		},
 	}
 
@@ -403,7 +487,20 @@ func TestSessionHandler_ParseConfig(t *testing.T) {
 				Options: tt.options,
 			}
 
-			config := handler.parseConfig(cmd)
+			config, err := handler.parseConfig(cmd)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("parseConfig() expected error containing %q, got nil", tt.errSubstr)
+					return
+				}
+				if !strings.Contains(err.Error(), tt.errSubstr) {
+					t.Errorf("parseConfig() error = %q, want error containing %q", err.Error(), tt.errSubstr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseConfig() unexpected error = %v", err)
+			}
 			if !tt.check(config) {
 				t.Errorf("parseConfig() returned unexpected config")
 			}
