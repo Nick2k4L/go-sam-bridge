@@ -81,18 +81,22 @@ func (h *SessionHandler) Handle(ctx *Context, cmd *protocol.Command) (*protocol.
 	}
 
 	// Parse session configuration options
-	config, err := h.parseConfig(cmd)
+	config, err := h.parseConfig(cmd, style)
 	if err != nil {
 		return sessionError(err.Error()), nil
 	}
 
 	// Create the session based on style
-	newSession := session.NewBaseSession(id, style, dest, ctx.Conn, config)
-	newSession.SetStatus(session.StatusActive)
+	newSession, err := h.createSession(id, style, dest, ctx.Conn, config, cmd)
+	if err != nil {
+		return sessionError(err.Error()), nil
+	}
 
 	// Register the session
 	if ctx.Registry != nil {
 		if err := ctx.Registry.Register(newSession); err != nil {
+			// Clean up session on registration failure
+			newSession.Close()
 			if err == util.ErrDuplicateID {
 				return sessionDuplicatedID(), nil
 			}
@@ -171,10 +175,81 @@ func (h *SessionHandler) parseExistingDest(privKeyBase64 string) (*session.Desti
 	return sessionDest, privKeyBase64, nil
 }
 
+// createSession creates a style-specific session implementation.
+// Returns the appropriate session type (BaseSession, RawSessionImpl, etc.)
+// based on the STYLE parameter.
+//
+// Per SAM specification:
+//   - STYLE=STREAM: Creates BaseSession (StreamSessionImpl when fully integrated)
+//   - STYLE=RAW: Creates RawSessionImpl with PROTOCOL/HEADER options
+//   - STYLE=DATAGRAM: Creates BaseSession (DatagramSessionImpl when implemented)
+//   - STYLE=PRIMARY: Creates BaseSession (PrimarySessionImpl when implemented)
+func (h *SessionHandler) createSession(
+	id string,
+	style session.Style,
+	dest *session.Destination,
+	conn net.Conn,
+	config *session.SessionConfig,
+	cmd *protocol.Command,
+) (session.Session, error) {
+	switch style {
+	case session.StyleRaw:
+		return h.createRawSession(id, dest, conn, config, cmd)
+	default:
+		// For STREAM, DATAGRAM, PRIMARY - use BaseSession for now
+		// These will be upgraded to specific implementations as completed
+		baseSession := session.NewBaseSession(id, style, dest, conn, config)
+		baseSession.SetStatus(session.StatusActive)
+		return baseSession, nil
+	}
+}
+
+// createRawSession creates a RawSessionImpl for STYLE=RAW.
+// Handles RAW-specific options: PROTOCOL, HEADER, PORT, HOST.
+//
+// Per SAM 3.1/3.2 specification:
+//   - PROTOCOL: I2CP protocol number (default 18, 0-255, excluding 6,17,19,20)
+//   - HEADER: When true, forwarded datagrams include FROM_PORT/TO_PORT/PROTOCOL
+//   - PORT: Forwarding port for incoming datagrams
+//   - HOST: Forwarding host (default 127.0.0.1)
+func (h *SessionHandler) createRawSession(
+	id string,
+	dest *session.Destination,
+	conn net.Conn,
+	config *session.SessionConfig,
+	cmd *protocol.Command,
+) (*session.RawSessionImpl, error) {
+	// Create the raw session
+	rawSession := session.NewRawSession(id, dest, conn, config)
+
+	// Parse forwarding configuration (PORT/HOST)
+	if portStr := cmd.Get("PORT"); portStr != "" {
+		port, err := protocol.ValidatePortString(portStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid PORT for forwarding: %w", err)
+		}
+
+		host := cmd.Get("HOST")
+		if host == "" {
+			host = "127.0.0.1" // Default per SAM spec
+		}
+
+		if err := rawSession.SetForwarding(host, port); err != nil {
+			return nil, fmt.Errorf("failed to set forwarding: %w", err)
+		}
+	}
+
+	// Activate the session
+	rawSession.Activate()
+
+	return rawSession, nil
+}
+
 // parseConfig extracts session configuration from command options.
 // Per SAM 3.2+, validates ports (0-65535) and protocol (0-255, excluding 6,17,19,20).
+// The style parameter determines which options are valid.
 // Returns an error if validation fails.
-func (h *SessionHandler) parseConfig(cmd *protocol.Command) (*session.SessionConfig, error) {
+func (h *SessionHandler) parseConfig(cmd *protocol.Command, style session.Style) (*session.SessionConfig, error) {
 	config := session.DefaultSessionConfig()
 
 	// Parse tunnel quantities
@@ -218,14 +293,23 @@ func (h *SessionHandler) parseConfig(cmd *protocol.Command) (*session.SessionCon
 	}
 
 	// Parse and validate RAW-specific options
+	// PROTOCOL is only valid for STYLE=RAW per SAM 3.2 specification
 	if v := cmd.Get("PROTOCOL"); v != "" {
+		if style != session.StyleRaw {
+			return nil, fmt.Errorf("PROTOCOL option is only valid for STYLE=RAW")
+		}
 		proto, err := protocol.ValidateProtocolString(v)
 		if err != nil {
 			return nil, fmt.Errorf("invalid PROTOCOL: %w", err)
 		}
 		config.Protocol = proto
 	}
+
+	// HEADER is only valid for STYLE=RAW per SAM 3.2 specification
 	if v := cmd.Get("HEADER"); v != "" {
+		if style != session.StyleRaw {
+			return nil, fmt.Errorf("HEADER option is only valid for STYLE=RAW")
+		}
 		config.HeaderEnabled = (v == "true")
 	}
 

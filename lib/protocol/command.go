@@ -6,6 +6,8 @@ package protocol
 //	VERB [ACTION] [KEY=VALUE]...
 //
 // All SAM messages are sent on a single line terminated by newline.
+// For commands with binary payloads (e.g., RAW SEND, DATAGRAM SEND),
+// the payload follows the command line.
 type Command struct {
 	// Verb is the primary command (e.g., "HELLO", "SESSION", "STREAM").
 	Verb string
@@ -18,6 +20,11 @@ type Command struct {
 	// Keys are case-sensitive per SAM specification.
 	// Empty values are allowed per SAM 3.2 (KEY, KEY=, KEY="").
 	Options map[string]string
+
+	// Payload contains binary data following the command line.
+	// Used by RAW SEND, DATAGRAM SEND commands per SAMv3.md.
+	// The payload size is specified in the SIZE option.
+	Payload []byte
 
 	// Raw is the original command line for debugging and logging.
 	Raw string

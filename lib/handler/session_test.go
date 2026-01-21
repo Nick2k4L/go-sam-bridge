@@ -291,6 +291,113 @@ func TestSessionHandler_Handle(t *testing.T) {
 			handshakeDone: true,
 			wantResult:    protocol.ResultInvalidKey,
 		},
+		// RAW session creation tests
+		{
+			name: "successful RAW session with TRANSIENT",
+			command: &protocol.Command{
+				Verb:   "SESSION",
+				Action: "CREATE",
+				Options: map[string]string{
+					"STYLE":       "RAW",
+					"ID":          "raw-session-1",
+					"DESTINATION": "TRANSIENT",
+				},
+			},
+			manager:       successManager,
+			registry:      newMockRegistry(),
+			handshakeDone: true,
+			wantResult:    protocol.ResultOK,
+			wantSession:   true,
+		},
+		{
+			name: "successful RAW session with custom protocol",
+			command: &protocol.Command{
+				Verb:   "SESSION",
+				Action: "CREATE",
+				Options: map[string]string{
+					"STYLE":       "RAW",
+					"ID":          "raw-session-2",
+					"DESTINATION": "TRANSIENT",
+					"PROTOCOL":    "18",
+				},
+			},
+			manager:       successManager,
+			registry:      newMockRegistry(),
+			handshakeDone: true,
+			wantResult:    protocol.ResultOK,
+			wantSession:   true,
+		},
+		{
+			name: "successful RAW session with HEADER enabled",
+			command: &protocol.Command{
+				Verb:   "SESSION",
+				Action: "CREATE",
+				Options: map[string]string{
+					"STYLE":       "RAW",
+					"ID":          "raw-session-3",
+					"DESTINATION": "TRANSIENT",
+					"HEADER":      "true",
+				},
+			},
+			manager:       successManager,
+			registry:      newMockRegistry(),
+			handshakeDone: true,
+			wantResult:    protocol.ResultOK,
+			wantSession:   true,
+		},
+		{
+			name: "successful RAW session with forwarding",
+			command: &protocol.Command{
+				Verb:   "SESSION",
+				Action: "CREATE",
+				Options: map[string]string{
+					"STYLE":       "RAW",
+					"ID":          "raw-session-4",
+					"DESTINATION": "TRANSIENT",
+					"PORT":        "7655",
+					"HOST":        "127.0.0.1",
+				},
+			},
+			manager:       successManager,
+			registry:      newMockRegistry(),
+			handshakeDone: true,
+			wantResult:    protocol.ResultOK,
+			wantSession:   true,
+		},
+		{
+			name: "RAW session with disallowed protocol 6",
+			command: &protocol.Command{
+				Verb:   "SESSION",
+				Action: "CREATE",
+				Options: map[string]string{
+					"STYLE":       "RAW",
+					"ID":          "raw-session-bad-proto",
+					"DESTINATION": "TRANSIENT",
+					"PROTOCOL":    "6",
+				},
+			},
+			manager:       successManager,
+			registry:      newMockRegistry(),
+			handshakeDone: true,
+			wantResult:    protocol.ResultI2PError,
+		},
+		{
+			name: "RAW session with disallowed protocol 17",
+			command: &protocol.Command{
+				Verb:   "SESSION",
+				Action: "CREATE",
+				Options: map[string]string{
+					"STYLE":       "RAW",
+					"ID":          "raw-session-bad-proto2",
+					"DESTINATION": "TRANSIENT",
+					"PROTOCOL":    "17",
+				},
+			},
+			manager:       successManager,
+			registry:      newMockRegistry(),
+			handshakeDone: true,
+			wantResult:    protocol.ResultI2PError,
+		},
 	}
 
 	for _, tt := range tests {
@@ -334,6 +441,7 @@ func TestSessionHandler_ParseConfig(t *testing.T) {
 	tests := []struct {
 		name      string
 		options   map[string]string
+		style     session.Style
 		wantErr   bool
 		errSubstr string
 		check     func(*session.SessionConfig) bool
@@ -341,6 +449,7 @@ func TestSessionHandler_ParseConfig(t *testing.T) {
 		{
 			name:    "defaults",
 			options: map[string]string{},
+			style:   session.StyleStream,
 			check: func(c *session.SessionConfig) bool {
 				return c.InboundQuantity == 3 && c.OutboundQuantity == 3
 			},
@@ -351,6 +460,7 @@ func TestSessionHandler_ParseConfig(t *testing.T) {
 				"inbound.quantity":  "5",
 				"outbound.quantity": "5",
 			},
+			style: session.StyleStream,
 			check: func(c *session.SessionConfig) bool {
 				return c.InboundQuantity == 5 && c.OutboundQuantity == 5
 			},
@@ -361,6 +471,7 @@ func TestSessionHandler_ParseConfig(t *testing.T) {
 				"inbound.length":  "2",
 				"outbound.length": "4",
 			},
+			style: session.StyleStream,
 			check: func(c *session.SessionConfig) bool {
 				return c.InboundLength == 2 && c.OutboundLength == 4
 			},
@@ -371,6 +482,7 @@ func TestSessionHandler_ParseConfig(t *testing.T) {
 				"FROM_PORT": "1234",
 				"TO_PORT":   "5678",
 			},
+			style: session.StyleStream,
 			check: func(c *session.SessionConfig) bool {
 				return c.FromPort == 1234 && c.ToPort == 5678
 			},
@@ -381,6 +493,7 @@ func TestSessionHandler_ParseConfig(t *testing.T) {
 				"FROM_PORT": "0",
 				"TO_PORT":   "0",
 			},
+			style: session.StyleStream,
 			check: func(c *session.SessionConfig) bool {
 				return c.FromPort == 0 && c.ToPort == 0
 			},
@@ -391,6 +504,7 @@ func TestSessionHandler_ParseConfig(t *testing.T) {
 				"FROM_PORT": "65535",
 				"TO_PORT":   "65535",
 			},
+			style: session.StyleStream,
 			check: func(c *session.SessionConfig) bool {
 				return c.FromPort == 65535 && c.ToPort == 65535
 			},
@@ -400,6 +514,7 @@ func TestSessionHandler_ParseConfig(t *testing.T) {
 			options: map[string]string{
 				"FROM_PORT": "-1",
 			},
+			style:     session.StyleStream,
 			wantErr:   true,
 			errSubstr: "FROM_PORT",
 		},
@@ -408,6 +523,7 @@ func TestSessionHandler_ParseConfig(t *testing.T) {
 			options: map[string]string{
 				"FROM_PORT": "99999",
 			},
+			style:     session.StyleStream,
 			wantErr:   true,
 			errSubstr: "FROM_PORT",
 		},
@@ -416,6 +532,7 @@ func TestSessionHandler_ParseConfig(t *testing.T) {
 			options: map[string]string{
 				"FROM_PORT": "notaport",
 			},
+			style:     session.StyleStream,
 			wantErr:   true,
 			errSubstr: "FROM_PORT",
 		},
@@ -424,6 +541,7 @@ func TestSessionHandler_ParseConfig(t *testing.T) {
 			options: map[string]string{
 				"TO_PORT": "-1",
 			},
+			style:     session.StyleStream,
 			wantErr:   true,
 			errSubstr: "TO_PORT",
 		},
@@ -432,6 +550,7 @@ func TestSessionHandler_ParseConfig(t *testing.T) {
 			options: map[string]string{
 				"TO_PORT": "70000",
 			},
+			style:     session.StyleStream,
 			wantErr:   true,
 			errSubstr: "TO_PORT",
 		},
@@ -441,6 +560,7 @@ func TestSessionHandler_ParseConfig(t *testing.T) {
 				"PROTOCOL": "18",
 				"HEADER":   "true",
 			},
+			style: session.StyleRaw,
 			check: func(c *session.SessionConfig) bool {
 				return c.Protocol == 18 && c.HeaderEnabled
 			},
@@ -450,6 +570,7 @@ func TestSessionHandler_ParseConfig(t *testing.T) {
 			options: map[string]string{
 				"PROTOCOL": "6",
 			},
+			style:     session.StyleRaw,
 			wantErr:   true,
 			errSubstr: "PROTOCOL",
 		},
@@ -458,6 +579,7 @@ func TestSessionHandler_ParseConfig(t *testing.T) {
 			options: map[string]string{
 				"PROTOCOL": "17",
 			},
+			style:     session.StyleRaw,
 			wantErr:   true,
 			errSubstr: "PROTOCOL",
 		},
@@ -466,6 +588,7 @@ func TestSessionHandler_ParseConfig(t *testing.T) {
 			options: map[string]string{
 				"PROTOCOL": "256",
 			},
+			style:     session.StyleRaw,
 			wantErr:   true,
 			errSubstr: "PROTOCOL",
 		},
@@ -474,8 +597,27 @@ func TestSessionHandler_ParseConfig(t *testing.T) {
 			options: map[string]string{
 				"PROTOCOL": "-1",
 			},
+			style:     session.StyleRaw,
 			wantErr:   true,
 			errSubstr: "PROTOCOL",
+		},
+		{
+			name: "PROTOCOL not allowed for STREAM",
+			options: map[string]string{
+				"PROTOCOL": "18",
+			},
+			style:     session.StyleStream,
+			wantErr:   true,
+			errSubstr: "PROTOCOL option is only valid for STYLE=RAW",
+		},
+		{
+			name: "HEADER not allowed for STREAM",
+			options: map[string]string{
+				"HEADER": "true",
+			},
+			style:     session.StyleStream,
+			wantErr:   true,
+			errSubstr: "HEADER option is only valid for STYLE=RAW",
 		},
 	}
 
@@ -487,7 +629,7 @@ func TestSessionHandler_ParseConfig(t *testing.T) {
 				Options: tt.options,
 			}
 
-			config, err := handler.parseConfig(cmd)
+			config, err := handler.parseConfig(cmd, tt.style)
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("parseConfig() expected error containing %q, got nil", tt.errSubstr)
