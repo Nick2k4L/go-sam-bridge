@@ -868,3 +868,56 @@ func TestStreamHandler_LookupSession(t *testing.T) {
 		t.Error("should return nil with no registry")
 	}
 }
+
+// TestStreamHandler_LookupSubsession tests subsession lookup in PRIMARY sessions.
+// Per SAMv3.md, STREAM commands use subsession IDs when operating on PRIMARY sessions.
+func TestStreamHandler_LookupSubsession(t *testing.T) {
+	handler := NewStreamHandler(nil, nil, nil)
+
+	// Create a PRIMARY session with a STREAM subsession
+	dest := &session.Destination{
+		PublicKey:     []byte("test-pub-base64"),
+		PrivateKey:    []byte("test-priv-key"),
+		SignatureType: 7,
+	}
+	config := session.DefaultSessionConfig()
+	primary := session.NewPrimarySession("primary-1", dest, nil, config)
+	primary.SetStatus(session.StatusActive)
+
+	// Add a STREAM subsession
+	_, err := primary.AddSubsession("stream-sub", session.StyleStream, session.SubsessionOptions{
+		FromPort:   1234,
+		ListenPort: 1234,
+	})
+	if err != nil {
+		t.Fatalf("AddSubsession() error = %v", err)
+	}
+
+	ctx := &Context{
+		Session: primary,
+	}
+
+	// Should find PRIMARY session by its own ID
+	found := handler.lookupSession(ctx, "primary-1")
+	if found != primary {
+		t.Error("should find PRIMARY session by its ID")
+	}
+
+	// Should find subsession by its ID
+	found = handler.lookupSession(ctx, "stream-sub")
+	if found == nil {
+		t.Fatal("should find subsession by its ID")
+	}
+	if found.ID() != "stream-sub" {
+		t.Errorf("found session ID = %q, want %q", found.ID(), "stream-sub")
+	}
+	if found.Style() != session.StyleStream {
+		t.Errorf("found session Style = %v, want STREAM", found.Style())
+	}
+
+	// Should not find nonexistent subsession
+	found = handler.lookupSession(ctx, "nonexistent-sub")
+	if found != nil {
+		t.Error("should not find nonexistent subsession")
+	}
+}

@@ -521,3 +521,46 @@ func TestRawInvalidKey(t *testing.T) {
 		t.Errorf("rawInvalidKey() = %q, want 'RESULT=INVALID_KEY'", got)
 	}
 }
+
+// TestRawHandler_RejectPrimarySession verifies RAW SEND is rejected on PRIMARY sessions.
+// Per SAMv3.md: "v1/v2 datagram/raw sending/receiving are not supported on a primary session"
+func TestRawHandler_RejectPrimarySession(t *testing.T) {
+	handler := NewRawHandler()
+
+	// Create a PRIMARY session
+	dest := &session.Destination{
+		PublicKey:     []byte("test-pub-base64"),
+		PrivateKey:    []byte("test-priv-key"),
+		SignatureType: 7,
+	}
+	config := session.DefaultSessionConfig()
+	primary := session.NewPrimarySession("primary-1", dest, nil, config)
+	primary.SetStatus(session.StatusActive)
+
+	ctx := &Context{
+		HandshakeComplete: true,
+		Session:           primary,
+	}
+
+	cmd := &protocol.Command{
+		Verb:   protocol.VerbRaw,
+		Action: protocol.ActionSend,
+		Options: map[string]string{
+			"DESTINATION": "test-dest-base64",
+			"SIZE":        "10",
+		},
+	}
+
+	resp, err := handler.Handle(ctx, cmd)
+	if err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+
+	got := resp.String()
+	if !strings.Contains(got, "RESULT=I2P_ERROR") {
+		t.Errorf("Handle() = %q, want RESULT=I2P_ERROR", got)
+	}
+	if !strings.Contains(got, "PRIMARY") {
+		t.Errorf("Handle() = %q, want error message mentioning PRIMARY", got)
+	}
+}
