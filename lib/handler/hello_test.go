@@ -74,6 +74,64 @@ func TestHelloHandler_Handle(t *testing.T) {
 			wantHandshake: true,
 		},
 		{
+			name:   "hello with single-digit MIN (SAM 3.1+)",
+			config: DefaultHelloConfig(),
+			command: &protocol.Command{
+				Verb:   "HELLO",
+				Action: "VERSION",
+				Options: map[string]string{
+					"MIN": "3",
+				},
+			},
+			wantResult:    protocol.ResultOK,
+			wantVersion:   "3.3",
+			wantHandshake: true,
+		},
+		{
+			name:   "hello with single-digit MAX (SAM 3.1+)",
+			config: DefaultHelloConfig(),
+			command: &protocol.Command{
+				Verb:   "HELLO",
+				Action: "VERSION",
+				Options: map[string]string{
+					"MAX": "3",
+				},
+			},
+			wantResult:    protocol.ResultOK,
+			wantVersion:   "3.0",
+			wantHandshake: true,
+		},
+		{
+			name:   "hello with single-digit MIN and MAX (SAM 3.1+)",
+			config: DefaultHelloConfig(),
+			command: &protocol.Command{
+				Verb:   "HELLO",
+				Action: "VERSION",
+				Options: map[string]string{
+					"MIN": "3",
+					"MAX": "3",
+				},
+			},
+			wantResult:    protocol.ResultOK,
+			wantVersion:   "3.0",
+			wantHandshake: true,
+		},
+		{
+			name:   "hello with mixed format MIN=3 MAX=3.2 (SAM 3.1+)",
+			config: DefaultHelloConfig(),
+			command: &protocol.Command{
+				Verb:   "HELLO",
+				Action: "VERSION",
+				Options: map[string]string{
+					"MIN": "3",
+					"MAX": "3.2",
+				},
+			},
+			wantResult:    protocol.ResultOK,
+			wantVersion:   "3.2",
+			wantHandshake: true,
+		},
+		{
 			name:   "no compatible version - client too old",
 			config: DefaultHelloConfig(),
 			command: &protocol.Command{
@@ -340,6 +398,12 @@ func TestVersionComparison(t *testing.T) {
 		{"4.0", "3.0", 1},
 		{"3.10", "3.2", 1},  // 10 > 2
 		{"3.2", "3.10", -1}, // 2 < 10
+		// Single-digit version tests (SAM 3.1+ feature)
+		{"3", "3.0", 0},  // "3" should equal "3.0"
+		{"3.0", "3", 0},  // Symmetric comparison
+		{"3", "3.1", -1}, // "3" (=3.0) < 3.1
+		{"4", "3.3", 1},  // "4" (=4.0) > 3.3
+		{"3", "4", -1},   // Single-digit comparison
 	}
 
 	for _, tt := range tests {
@@ -347,6 +411,29 @@ func TestVersionComparison(t *testing.T) {
 			got := compareVersions(tt.a, tt.b)
 			if got != tt.want {
 				t.Errorf("compareVersions(%q, %q) = %d, want %d", tt.a, tt.b, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeVersion(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"3", "3.0"},
+		{"4", "4.0"},
+		{"10", "10.0"},
+		{"3.0", "3.0"},
+		{"3.1", "3.1"},
+		{"3.10", "3.10"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := normalizeVersion(tt.input)
+			if got != tt.want {
+				t.Errorf("normalizeVersion(%q) = %q, want %q", tt.input, got, tt.want)
 			}
 		})
 	}
@@ -361,13 +448,16 @@ func TestIsValidVersion(t *testing.T) {
 		{"3.1", true},
 		{"3.3", true},
 		{"10.20", true},
-		{"3", false},
+		{"3", true},  // SAM 3.1+: single-digit versions are valid
+		{"4", true},  // SAM 3.1+: single-digit versions are valid
+		{"10", true}, // SAM 3.1+: single-digit versions are valid
 		{"3.0.1", false},
 		{"3.x", false},
 		{"x.0", false},
 		{"", false},
 		{".", false},
 		{"a.b", false},
+		{"a", false}, // Non-numeric single-digit should be invalid
 	}
 
 	for _, tt := range tests {

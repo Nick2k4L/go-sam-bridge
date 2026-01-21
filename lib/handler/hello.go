@@ -114,6 +114,7 @@ func parseVersionRange(cmd *protocol.Command) (min, max string, err error) {
 
 // negotiateVersion finds the highest compatible version.
 // Returns empty string if no compatible version exists.
+// The returned version is always in normalized "X.Y" format.
 func (h *HelloHandler) negotiateVersion(clientMin, clientMax string) (string, bool) {
 	// Server's supported range
 	serverMin := h.config.MinVersion
@@ -128,8 +129,8 @@ func (h *HelloHandler) negotiateVersion(clientMin, clientMax string) (string, bo
 		return "", false
 	}
 
-	// Return highest compatible version (overlapMax)
-	return overlapMax, true
+	// Return highest compatible version (overlapMax), normalized to "X.Y" format
+	return normalizeVersion(overlapMax), true
 }
 
 // authenticate validates USER and PASSWORD credentials.
@@ -181,10 +182,12 @@ func (e *versionError) Error() string {
 	return e.msg
 }
 
-// isValidVersion checks if a version string is in format "X.Y".
+// isValidVersion checks if a version string is in format "X.Y" or single-digit "X".
+// Per SAM 3.1: "The MIN and MAX parameters now support single-digit versions such as '3'."
 func isValidVersion(v string) bool {
 	parts := strings.Split(v, ".")
-	if len(parts) != 2 {
+	// Accept "X" (single-digit) or "X.Y" (major.minor) format
+	if len(parts) < 1 || len(parts) > 2 {
 		return false
 	}
 	for _, p := range parts {
@@ -195,8 +198,21 @@ func isValidVersion(v string) bool {
 	return true
 }
 
+// normalizeVersion ensures a version string is in "X.Y" format.
+// Single-digit versions like "3" are converted to "3.0".
+// Per SAM 3.1: single-digit versions are supported and treated as X.0.
+func normalizeVersion(v string) string {
+	if !strings.Contains(v, ".") {
+		return v + ".0"
+	}
+	return v
+}
+
 // parseVersion splits a version string into major and minor components.
+// Handles both "X.Y" format and single-digit "X" format (treated as X.0).
 func parseVersion(v string) (major, minor int) {
+	// Normalize single-digit versions
+	v = normalizeVersion(v)
 	parts := strings.Split(v, ".")
 	if len(parts) != 2 {
 		return 0, 0
