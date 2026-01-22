@@ -26,7 +26,13 @@ type SessionHandler struct {
 	destManager        destination.Manager
 	i2cpProvider       session.I2CPSessionProvider
 	tunnelBuildTimeout time.Duration
+	onSessionCreated   SessionCreatedCallback
 }
+
+// SessionCreatedCallback is called after a session is successfully created.
+// This can be used to wire additional components like StreamManager.
+// The callback receives the session and the I2CP handle (may be nil if no I2CP provider).
+type SessionCreatedCallback func(sess session.Session, i2cpHandle session.I2CPSessionHandle)
 
 // NewSessionHandler creates a new SESSION handler with the given destination manager.
 func NewSessionHandler(destManager destination.Manager) *SessionHandler {
@@ -46,6 +52,12 @@ func (h *SessionHandler) SetI2CPProvider(provider session.I2CPSessionProvider) {
 // Default is 60 seconds per SAM specification guidance.
 func (h *SessionHandler) SetTunnelBuildTimeout(timeout time.Duration) {
 	h.tunnelBuildTimeout = timeout
+}
+
+// SetSessionCreatedCallback sets the callback called after a session is successfully created.
+// This enables wiring additional components like StreamManager per session.
+func (h *SessionHandler) SetSessionCreatedCallback(cb SessionCreatedCallback) {
+	h.onSessionCreated = cb
 }
 
 // Handle processes a SESSION command.
@@ -138,15 +150,19 @@ func (h *SessionHandler) handleCreate(ctx *Context, cmd *protocol.Command) (*pro
 		return sessionError(err.Error()), nil
 	}
 
+	// Track I2CP handle for callback (may remain nil if no I2CP provider)
+	var i2cpHandle session.I2CPSessionHandle
+
 	// ISSUE-003: Create I2CP session and wait for tunnels if provider is set.
 	// Per SAMv3.md: "the router builds tunnels before responding with SESSION STATUS.
 	// This could take several seconds."
 	if h.i2cpProvider != nil && h.i2cpProvider.IsConnected() {
-		i2cpHandle, err := h.createI2CPSession(ctx.Ctx, id, config)
+		handle, err := h.createI2CPSession(ctx.Ctx, id, config)
 		if err != nil {
 			newSession.Close()
 			return sessionI2PError(fmt.Sprintf("failed to create I2P session: %v", err)), nil
 		}
+		i2cpHandle = handle
 
 		// Associate I2CP session with the SAM session
 		if baseSession, ok := newSession.(*session.BaseSession); ok {
@@ -181,6 +197,11 @@ func (h *SessionHandler) handleCreate(ctx *Context, cmd *protocol.Command) (*pro
 
 	// Bind session to connection context
 	ctx.BindSession(newSession)
+
+	// Invoke session created callback to wire additional components (e.g., StreamManager)
+	if h.onSessionCreated != nil {
+		h.onSessionCreated(newSession, i2cpHandle)
+	}
 
 	return sessionOK(privKeyBase64, id), nil
 }

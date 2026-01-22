@@ -73,6 +73,11 @@ type SessionConfig struct {
 	// 0 means disabled.
 	CloseIdleTime int
 
+	// FastReceive enables fast receive mode for I2CP.
+	// When true, messages are delivered immediately without batching.
+	// Default is true for better performance per i2cp.fastReceive option.
+	FastReceive bool
+
 	// SamUDPHost is the hostname for UDP datagram binding (sam.udp.host option).
 	// Per SAMv3.md: Java I2P specific option for datagram sessions.
 	// Default is empty (use system default).
@@ -135,6 +140,7 @@ func DefaultSessionConfig() *SessionConfig {
 		ReduceIdleTime:         0,
 		ReduceIdleQuantity:     0,
 		CloseIdleTime:          0,
+		FastReceive:            true, // Default true for better I2CP performance
 		OfflineSignature:       nil,
 		I2CPOptions:            make(map[string]string),
 	}

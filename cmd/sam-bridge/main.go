@@ -32,6 +32,8 @@ import (
 	"github.com/go-i2p/go-sam-bridge/lib/handler"
 	"github.com/go-i2p/go-sam-bridge/lib/i2cp"
 	"github.com/go-i2p/go-sam-bridge/lib/session"
+	samstreaming "github.com/go-i2p/go-sam-bridge/lib/streaming"
+	"github.com/go-i2p/go-streaming"
 	"github.com/sirupsen/logrus"
 )
 
@@ -43,6 +45,43 @@ var (
 	BuildTime = "unknown"
 	GitCommit = "unknown"
 )
+
+// i2cpProviderAdapter wraps i2cp.Client to implement session.I2CPSessionProvider.
+// This adapter bridges the i2cp package types to the session package interface,
+// avoiding circular import issues.
+type i2cpProviderAdapter struct {
+	client *i2cp.Client
+}
+
+// CreateSessionForSAM creates an I2CP session for a SAM session.
+// Implements session.I2CPSessionProvider.
+func (a *i2cpProviderAdapter) CreateSessionForSAM(ctx context.Context, samSessionID string, config *session.SessionConfig) (session.I2CPSessionHandle, error) {
+	// Convert session.SessionConfig to i2cp.SessionConfigFromSession
+	i2cpConfig := &i2cp.SessionConfigFromSession{
+		SignatureType:          config.SignatureType,
+		EncryptionTypes:        config.EncryptionTypes,
+		InboundQuantity:        config.InboundQuantity,
+		OutboundQuantity:       config.OutboundQuantity,
+		InboundLength:          config.InboundLength,
+		OutboundLength:         config.OutboundLength,
+		InboundBackupQuantity:  config.InboundBackupQuantity,
+		OutboundBackupQuantity: config.OutboundBackupQuantity,
+		FastReceive:            config.FastReceive,
+		ReduceIdleTime:         config.ReduceIdleTime,
+		CloseIdleTime:          config.CloseIdleTime,
+	}
+
+	return a.client.CreateSessionForSAM(ctx, samSessionID, i2cpConfig)
+}
+
+// IsConnected returns true if connected to the I2P router.
+// Implements session.I2CPSessionProvider.
+func (a *i2cpProviderAdapter) IsConnected() bool {
+	return a.client.IsConnected()
+}
+
+// Compile-time check that i2cpProviderAdapter implements session.I2CPSessionProvider.
+var _ session.I2CPSessionProvider = (*i2cpProviderAdapter)(nil)
 
 // Config holds the bridge server configuration.
 type Config struct {
@@ -140,8 +179,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Register all SAM command handlers
-	registerHandlers(server, cfg, log)
+	// Register all SAM command handlers with I2CP integration
+	registerHandlers(server, cfg, i2cpClient, log)
 
 	// Set up signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
@@ -234,7 +273,7 @@ func parseFlags() *Config {
 // registerHandlers registers all SAM command handlers with the server.
 // This sets up handlers for HELLO, SESSION, STREAM, DATAGRAM, RAW,
 // NAMING, DEST, PING, QUIT, and AUTH commands per SAMv3.md.
-func registerHandlers(server *bridge.Server, cfg *Config, log *logrus.Logger) {
+func registerHandlers(server *bridge.Server, cfg *Config, i2cpClient *i2cp.Client, log *logrus.Logger) {
 	router := server.Router()
 	authStore := server.AuthStore()
 
@@ -252,18 +291,69 @@ func registerHandlers(server *bridge.Server, cfg *Config, log *logrus.Logger) {
 
 	log.Debug("Registered HELLO VERSION handler")
 
-	// Register SESSION handler
+	// Create STREAM handlers first so we can reference them in session callback
+	streamConnector := handler.NewStreamingConnector()
+	streamAcceptor := handler.NewStreamingAcceptor()
+	streamForwarder := handler.NewStreamingForwarder()
+
+	// Register SESSION handler with I2CP provider for tunnel waiting
+	// ISSUE-003: This enables SESSION CREATE to wait for tunnels before responding
 	sessionHandler := handler.NewSessionHandler(destManager)
+	i2cpProvider := &i2cpProviderAdapter{client: i2cpClient}
+	sessionHandler.SetI2CPProvider(i2cpProvider)
+
+	// Set session created callback to wire StreamManager per session
+	// Note: go-streaming requires its own I2CP session, so we get the underlying
+	// go-i2cp client and create a StreamManager that uses the same router connection.
+	sessionHandler.SetSessionCreatedCallback(func(sess session.Session, i2cpHandle session.I2CPSessionHandle) {
+		// Only create StreamManager for STREAM sessions
+		if sess.Style() != session.StyleStream {
+			return
+		}
+
+		// Get the underlying go-i2cp client from our i2cp.Client wrapper
+		underlyingClient := i2cpClient.I2CPClient()
+		if underlyingClient == nil {
+			log.WithField("sessionID", sess.ID()).Warn("Cannot create StreamManager: no underlying I2CP client")
+			return
+		}
+
+		// Create go-streaming StreamManager
+		// Note: This creates a separate streaming session using the same router connection
+		streamManager, err := streaming.NewStreamManager(underlyingClient)
+		if err != nil {
+			log.WithField("sessionID", sess.ID()).WithError(err).Warn("Failed to create StreamManager")
+			return
+		}
+
+		// Start the streaming session
+		ctx := context.Background()
+		if err := streamManager.StartSession(ctx); err != nil {
+			log.WithField("sessionID", sess.ID()).WithError(err).Warn("Failed to start StreamManager session")
+			return
+		}
+
+		// Wrap with adapter and register with stream handlers
+		adapter, err := samstreaming.NewAdapter(streamManager)
+		if err != nil {
+			log.WithField("sessionID", sess.ID()).WithError(err).Warn("Failed to create StreamManager adapter")
+			return
+		}
+
+		streamConnector.RegisterManager(sess.ID(), adapter)
+		streamAcceptor.RegisterManager(sess.ID(), adapter)
+		streamForwarder.RegisterManager(sess.ID(), adapter)
+
+		log.WithField("sessionID", sess.ID()).Debug("Registered StreamManager for session")
+	})
+
 	router.Register("SESSION CREATE", sessionHandler)
 	router.Register("SESSION ADD", sessionHandler)
 	router.Register("SESSION REMOVE", sessionHandler)
 
-	log.Debug("Registered SESSION handlers")
+	log.Debug("Registered SESSION handlers with I2CP provider and StreamManager callback")
 
 	// Register STREAM handlers
-	streamConnector := handler.NewStreamingConnector()
-	streamAcceptor := handler.NewStreamingAcceptor()
-	streamForwarder := handler.NewStreamingForwarder()
 	streamHandler := handler.NewStreamHandler(streamConnector, streamAcceptor, streamForwarder)
 	router.Register("STREAM CONNECT", streamHandler)
 	router.Register("STREAM ACCEPT", streamHandler)
