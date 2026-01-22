@@ -2,6 +2,7 @@ package handler
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"strings"
 	"testing"
@@ -1002,5 +1003,65 @@ func TestStreamHandler_LookupSubsession(t *testing.T) {
 	found = handler.lookupSession(ctx, "nonexistent-sub")
 	if found != nil {
 		t.Error("should not find nonexistent subsession")
+	}
+}
+
+func TestStreamHandler_ConnectError(t *testing.T) {
+	handler := NewStreamHandler(nil, nil, nil)
+
+	tests := []struct {
+		name       string
+		err        error
+		wantResult string
+	}{
+		{
+			name:       "timeout error",
+			err:        util.ErrTimeout,
+			wantResult: protocol.ResultTimeout,
+		},
+		{
+			name:       "peer not found error",
+			err:        util.ErrPeerNotFound,
+			wantResult: protocol.ResultPeerNotFound,
+		},
+		{
+			name:       "leaseset not found error",
+			err:        util.ErrLeasesetNotFound,
+			wantResult: protocol.ResultPeerNotFound, // Maps to PEER_NOT_FOUND
+		},
+		{
+			name:       "invalid key error",
+			err:        util.ErrInvalidKey,
+			wantResult: protocol.ResultInvalidKey,
+		},
+		{
+			name:       "cant reach peer error",
+			err:        util.ErrCantReachPeer,
+			wantResult: protocol.ResultCantReachPeer,
+		},
+		{
+			name:       "unknown error defaults to cant reach peer",
+			err:        errors.New("some unknown error"),
+			wantResult: protocol.ResultCantReachPeer,
+		},
+		{
+			name:       "wrapped timeout error",
+			err:        fmt.Errorf("connection failed: %w", util.ErrTimeout),
+			wantResult: protocol.ResultTimeout,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := handler.connectError(tt.err)
+			if resp == nil {
+				t.Fatal("connectError() returned nil response")
+			}
+
+			respStr := resp.String()
+			if !strings.Contains(respStr, "RESULT="+tt.wantResult) {
+				t.Errorf("connectError() = %q, want RESULT=%s", respStr, tt.wantResult)
+			}
+		})
 	}
 }
