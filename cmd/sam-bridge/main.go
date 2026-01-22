@@ -21,8 +21,10 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 
 	"github.com/go-i2p/go-sam-bridge/lib/bridge"
@@ -109,9 +111,24 @@ func main() {
 
 	log.WithField("version", i2cpClient.RouterVersion()).Info("Connected to I2P router")
 
+	// Parse UDP datagram port from address string
+	datagramPort := bridge.DefaultDatagramPort
+	if cfg.UDPAddr != "" {
+		_, portStr, err := net.SplitHostPort(cfg.UDPAddr)
+		if err != nil {
+			// Try parsing as just a port number
+			portStr = cfg.UDPAddr
+		}
+		if parsedPort, err := strconv.Atoi(portStr); err == nil {
+			datagramPort = parsedPort
+		}
+	}
+
 	// Create bridge server configuration
 	bridgeConfig := &bridge.Config{
-		ListenAddr: cfg.ListenAddr,
+		ListenAddr:   cfg.ListenAddr,
+		I2CPAddr:     cfg.I2CPAddr,
+		DatagramPort: datagramPort,
 	}
 
 	// Create bridge server
