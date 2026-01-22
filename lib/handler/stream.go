@@ -195,7 +195,8 @@ func (h *StreamHandler) handleAccept(ctx *Context, cmd *protocol.Command) (*prot
 
 	// Check for concurrent accepts (version-dependent)
 	// Prior to SAM 3.2, only one concurrent ACCEPT is allowed per session.
-	streamSess, isStreamSession := sess.(*session.StreamSessionImpl)
+	// Use interface type assertion to StreamSession for proper interface compliance.
+	streamSess, isStreamSession := sess.(session.StreamSession)
 	if isStreamSession {
 		// Check if we're on a pre-3.2 version
 		if compareVersions(ctx.Version, "3.2") < 0 {

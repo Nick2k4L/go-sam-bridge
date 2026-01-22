@@ -195,6 +195,18 @@ type StreamSession interface {
 
 	// IsForwarding returns true if FORWARD is active on this session.
 	IsForwarding() bool
+
+	// PendingAcceptCount returns the number of pending STREAM ACCEPT operations.
+	// Used for enforcing pre-SAM 3.2 concurrent accept restrictions.
+	PendingAcceptCount() int
+
+	// IncrementPendingAccepts increments the pending accept counter.
+	// Called when a STREAM ACCEPT operation begins.
+	IncrementPendingAccepts()
+
+	// DecrementPendingAccepts decrements the pending accept counter.
+	// Called when a STREAM ACCEPT operation completes or fails.
+	DecrementPendingAccepts()
 }
 
 // DatagramSession extends Session with DATAGRAM-specific operations.

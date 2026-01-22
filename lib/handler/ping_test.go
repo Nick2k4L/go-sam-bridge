@@ -147,6 +147,36 @@ func TestBuildPongResponse(t *testing.T) {
 	}
 }
 
+// TestPongWithSpecialCharacters verifies PONG responses with special characters
+// are formatted correctly per SAM 3.2 specification. Per SAMv3.md, PONG should
+// echo the arbitrary text exactly as received without additional quoting.
+func TestPongWithSpecialCharacters(t *testing.T) {
+	tests := []struct {
+		name string
+		text string
+		want string
+	}{
+		// Per SAM spec, PONG echoes arbitrary text without quoting
+		{"text with equals", "foo=bar", "PONG foo=bar\n"},
+		{"text with colon", "host:port", "PONG host:port\n"},
+		{"text with quotes", `"quoted"`, `PONG "quoted"` + "\n"},
+		{"text with backslash", `path\to\file`, `PONG path\to\file` + "\n"},
+		{"text with tabs", "tab\ttab", "PONG tab\ttab\n"},
+		{"complex key=value", "KEY=value with spaces", "PONG KEY=value with spaces\n"},
+		{"multiple special chars", `a="b" c="d"`, `PONG a="b" c="d"` + "\n"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := buildPongResponse(tt.text)
+			got := resp.String()
+			if got != tt.want {
+				t.Errorf("buildPongResponse(%q).String() = %q, want %q", tt.text, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRegisterPingHandler(t *testing.T) {
 	router := NewRouter()
 	RegisterPingHandler(router)
