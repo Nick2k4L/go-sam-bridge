@@ -398,7 +398,6 @@ func TestIntegration_Adapter_SendTo(t *testing.T) {
 	// Send a test datagram
 	payload := []byte("test datagram payload")
 	err = adapter.SendTo(payload, destB64, 7782)
-
 	// Note: Even if delivery fails due to network timing, SendTo should not error
 	// immediately. The actual delivery is asynchronous in I2P.
 	if err != nil {
