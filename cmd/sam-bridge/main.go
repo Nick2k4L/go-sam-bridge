@@ -303,33 +303,32 @@ func registerHandlers(server *bridge.Server, cfg *Config, i2cpClient *i2cp.Clien
 	sessionHandler.SetI2CPProvider(i2cpProvider)
 
 	// Set session created callback to wire StreamManager per session
-	// Note: go-streaming requires its own I2CP session, so we get the underlying
-	// go-i2cp client and create a StreamManager that uses the same router connection.
+	// Uses NewStreamManagerFromSession to reuse the existing I2CP session (BUG-001 resolved)
 	sessionHandler.SetSessionCreatedCallback(func(sess session.Session, i2cpHandle session.I2CPSessionHandle) {
-		// Only create StreamManager for STREAM sessions
-		if sess.Style() != session.StyleStream {
+		// Only create StreamManager for STREAM sessions with I2CP integration
+		if sess.Style() != session.StyleStream || i2cpHandle == nil {
 			return
 		}
 
-		// Get the underlying go-i2cp client from our i2cp.Client wrapper
+		// Type assert to get the underlying I2CP session
+		i2cpSess, ok := i2cpHandle.(*i2cp.I2CPSession)
+		if !ok {
+			log.WithField("sessionID", sess.ID()).Warn("Cannot create StreamManager: invalid I2CP session type")
+			return
+		}
+
+		// Get the underlying go-i2cp session and client
+		underlyingSession := i2cpSess.Session()
 		underlyingClient := i2cpClient.I2CPClient()
-		if underlyingClient == nil {
-			log.WithField("sessionID", sess.ID()).Warn("Cannot create StreamManager: no underlying I2CP client")
+		if underlyingSession == nil || underlyingClient == nil {
+			log.WithField("sessionID", sess.ID()).Warn("Cannot create StreamManager: no underlying I2CP session/client")
 			return
 		}
 
-		// Create go-streaming StreamManager
-		// Note: This creates a separate streaming session using the same router connection
-		streamManager, err := streaming.NewStreamManager(underlyingClient)
+		// Create go-streaming StreamManager from existing session (no duplicate session)
+		streamManager, err := streaming.NewStreamManagerFromSession(underlyingClient, underlyingSession)
 		if err != nil {
-			log.WithField("sessionID", sess.ID()).WithError(err).Warn("Failed to create StreamManager")
-			return
-		}
-
-		// Start the streaming session
-		ctx := context.Background()
-		if err := streamManager.StartSession(ctx); err != nil {
-			log.WithField("sessionID", sess.ID()).WithError(err).Warn("Failed to start StreamManager session")
+			log.WithField("sessionID", sess.ID()).WithError(err).Warn("Failed to create StreamManager from session")
 			return
 		}
 
@@ -344,7 +343,7 @@ func registerHandlers(server *bridge.Server, cfg *Config, i2cpClient *i2cp.Clien
 		streamAcceptor.RegisterManager(sess.ID(), adapter)
 		streamForwarder.RegisterManager(sess.ID(), adapter)
 
-		log.WithField("sessionID", sess.ID()).Debug("Registered StreamManager for session")
+		log.WithField("sessionID", sess.ID()).Debug("Registered StreamManager for session (reusing I2CP session)")
 	})
 
 	router.Register("SESSION CREATE", sessionHandler)
