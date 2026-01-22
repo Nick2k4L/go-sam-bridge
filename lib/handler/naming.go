@@ -2,11 +2,30 @@
 package handler
 
 import (
+	"context"
 	"strings"
+	"time"
 
 	"github.com/go-i2p/go-sam-bridge/lib/destination"
 	"github.com/go-i2p/go-sam-bridge/lib/protocol"
 )
+
+// DestinationResolver resolves I2P destination names to full destinations.
+// This interface abstracts the go-i2cp DestinationLookup functionality for
+// NAMING LOOKUP commands per SAM 3.0-3.3 specification.
+//
+// Implementations should support:
+//   - .b32.i2p addresses (decoded to hash, looked up via I2CP HostLookupMessage type 0)
+//   - .i2p hostnames (looked up via I2CP HostLookupMessage type 1)
+//
+// The resolver is called with a context that may have a deadline for timeout control.
+type DestinationResolver interface {
+	// Resolve looks up an I2P destination by name.
+	// Returns the full Base64-encoded destination on success.
+	// Returns empty string and error if the destination cannot be found.
+	// The name can be a .b32.i2p address or a .i2p hostname.
+	Resolve(ctx context.Context, name string) (string, error)
+}
 
 // LeasesetOption represents a single key-value option from a leaseset.
 // Per SAM API 0.9.66, options are returned with OPTION: prefix.
@@ -39,17 +58,45 @@ type LeasesetLookupProvider interface {
 type NamingHandler struct {
 	destManager      destination.Manager
 	leasesetProvider LeasesetLookupProvider
+	resolver         DestinationResolver
+	resolveTimeout   time.Duration
 }
+
+// DefaultResolveTimeout is the default timeout for destination resolution.
+const DefaultResolveTimeout = 30 * time.Second
 
 // NewNamingHandler creates a new NAMING handler with the given destination manager.
 func NewNamingHandler(destManager destination.Manager) *NamingHandler {
-	return &NamingHandler{destManager: destManager}
+	return &NamingHandler{
+		destManager:    destManager,
+		resolveTimeout: DefaultResolveTimeout,
+	}
 }
 
 // SetLeasesetProvider sets the leaseset lookup provider for OPTIONS=true support.
 // If not set, OPTIONS=true lookups will fail with I2P_ERROR.
 func (h *NamingHandler) SetLeasesetProvider(provider LeasesetLookupProvider) {
 	h.leasesetProvider = provider
+}
+
+// SetDestinationResolver sets the resolver for B32 and hostname lookups.
+// This enables NAMING LOOKUP to resolve .b32.i2p addresses and .i2p hostnames
+// via the I2P router's network database. If not set, these lookups return KEY_NOT_FOUND.
+//
+// The resolver is typically backed by go-i2cp's DestinationLookup function:
+//
+//	client.DestinationLookup(ctx, session, "example.i2p")
+//	client.DestinationLookup(ctx, session, "xxx.b32.i2p")
+func (h *NamingHandler) SetDestinationResolver(resolver DestinationResolver) {
+	h.resolver = resolver
+}
+
+// SetResolveTimeout sets the timeout for destination resolution.
+// Default is 30 seconds per I2CP HostLookupMessage recommendations.
+func (h *NamingHandler) SetResolveTimeout(timeout time.Duration) {
+	if timeout > 0 {
+		h.resolveTimeout = timeout
+	}
 }
 
 // Handle processes a NAMING LOOKUP command.
@@ -158,17 +205,47 @@ func (h *NamingHandler) resolveName(name string) (string, error) {
 }
 
 // resolveB32 resolves a .b32.i2p address.
-// TODO: This requires network lookup via I2CP.
+// Uses the configured DestinationResolver for network lookup via I2CP.
+// Returns KEY_NOT_FOUND if no resolver is configured.
 func (h *NamingHandler) resolveB32(name string) (string, error) {
-	// For now, return not found - actual lookup requires I2CP integration
-	return "", &namingErr{msg: "b32 lookup not implemented"}
+	if h.resolver == nil {
+		return "", &namingErr{msg: "b32 lookup not available: no resolver configured"}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), h.resolveTimeout)
+	defer cancel()
+
+	dest, err := h.resolver.Resolve(ctx, name)
+	if err != nil {
+		return "", &namingErr{msg: "b32 lookup failed: " + err.Error()}
+	}
+	if dest == "" {
+		return "", &namingErr{msg: "b32 address not found"}
+	}
+
+	return dest, nil
 }
 
 // resolveHostname resolves an .i2p hostname.
-// TODO: This requires addressbook lookup or network query.
+// Uses the configured DestinationResolver for network lookup via I2CP.
+// Returns KEY_NOT_FOUND if no resolver is configured.
 func (h *NamingHandler) resolveHostname(name string) (string, error) {
-	// For now, return not found - actual lookup requires addressbook
-	return "", &namingErr{msg: "hostname lookup not implemented"}
+	if h.resolver == nil {
+		return "", &namingErr{msg: "hostname lookup not available: no resolver configured"}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), h.resolveTimeout)
+	defer cancel()
+
+	dest, err := h.resolver.Resolve(ctx, name)
+	if err != nil {
+		return "", &namingErr{msg: "hostname lookup failed: " + err.Error()}
+	}
+	if dest == "" {
+		return "", &namingErr{msg: "hostname not found"}
+	}
+
+	return dest, nil
 }
 
 // isValidName checks if a name is valid for lookup.

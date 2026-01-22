@@ -1,8 +1,10 @@
 package handler
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-i2p/go-sam-bridge/lib/protocol"
 	"github.com/go-i2p/go-sam-bridge/lib/session"
@@ -781,5 +783,273 @@ func TestNamingHandler_HandleOptionsWithBase64Destination(t *testing.T) {
 	respStr := resp.String()
 	if !strings.Contains(respStr, "RESULT=OK") {
 		t.Errorf("Handle() = %q, want RESULT=OK", respStr)
+	}
+}
+
+// mockDestinationResolver is a mock implementation of DestinationResolver for testing.
+type mockDestinationResolver struct {
+	destinations map[string]string
+	err          error
+}
+
+func (m *mockDestinationResolver) Resolve(ctx context.Context, name string) (string, error) {
+	if m.err != nil {
+		return "", m.err
+	}
+	dest, ok := m.destinations[name]
+	if !ok {
+		return "", nil
+	}
+	return dest, nil
+}
+
+func TestNamingHandler_SetDestinationResolver(t *testing.T) {
+	handler := NewNamingHandler(&mockManager{})
+
+	// Initially nil
+	if handler.resolver != nil {
+		t.Error("expected resolver to be nil initially")
+	}
+
+	// Set resolver
+	resolver := &mockDestinationResolver{}
+	handler.SetDestinationResolver(resolver)
+
+	if handler.resolver != resolver {
+		t.Error("expected resolver to be set")
+	}
+}
+
+func TestNamingHandler_SetResolveTimeout(t *testing.T) {
+	handler := NewNamingHandler(&mockManager{})
+
+	// Check default
+	if handler.resolveTimeout != DefaultResolveTimeout {
+		t.Errorf("expected default timeout %v, got %v", DefaultResolveTimeout, handler.resolveTimeout)
+	}
+
+	// Set custom timeout
+	customTimeout := 10 * time.Second
+	handler.SetResolveTimeout(customTimeout)
+	if handler.resolveTimeout != customTimeout {
+		t.Errorf("expected timeout %v, got %v", customTimeout, handler.resolveTimeout)
+	}
+
+	// Zero/negative timeout should not change value
+	handler.SetResolveTimeout(0)
+	if handler.resolveTimeout != customTimeout {
+		t.Errorf("expected timeout to remain %v after setting 0, got %v", customTimeout, handler.resolveTimeout)
+	}
+
+	handler.SetResolveTimeout(-1 * time.Second)
+	if handler.resolveTimeout != customTimeout {
+		t.Errorf("expected timeout to remain %v after setting negative, got %v", customTimeout, handler.resolveTimeout)
+	}
+}
+
+func TestNamingHandler_B32LookupWithResolver(t *testing.T) {
+	destB64 := strings.Repeat("B", 516) // Valid base64 destination
+
+	tests := []struct {
+		name           string
+		resolver       *mockDestinationResolver
+		b32Address     string
+		wantResult     string
+		wantValue      bool
+		wantValueMatch string
+	}{
+		{
+			name:       "no resolver configured",
+			resolver:   nil,
+			b32Address: "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuv.b32.i2p",
+			wantResult: protocol.ResultKeyNotFound,
+		},
+		{
+			name: "resolver returns destination",
+			resolver: &mockDestinationResolver{
+				destinations: map[string]string{
+					"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuv.b32.i2p": destB64,
+				},
+			},
+			b32Address:     "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuv.b32.i2p",
+			wantResult:     protocol.ResultOK,
+			wantValue:      true,
+			wantValueMatch: destB64,
+		},
+		{
+			name: "resolver returns not found (empty string)",
+			resolver: &mockDestinationResolver{
+				destinations: map[string]string{},
+			},
+			b32Address: "unknown.b32.i2p",
+			wantResult: protocol.ResultKeyNotFound,
+		},
+		{
+			name: "resolver returns error",
+			resolver: &mockDestinationResolver{
+				err: context.DeadlineExceeded,
+			},
+			b32Address: "test.b32.i2p",
+			wantResult: protocol.ResultKeyNotFound,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := NewNamingHandler(&mockManager{})
+			if tt.resolver != nil {
+				handler.SetDestinationResolver(tt.resolver)
+			}
+
+			ctx := NewContext(&mockConn{}, nil)
+			cmd := &protocol.Command{
+				Verb:   "NAMING",
+				Action: "LOOKUP",
+				Options: map[string]string{
+					"NAME": tt.b32Address,
+				},
+			}
+
+			resp, err := handler.Handle(ctx, cmd)
+			if err != nil {
+				t.Fatalf("Handle() error = %v", err)
+			}
+
+			respStr := resp.String()
+			if !strings.Contains(respStr, "RESULT="+tt.wantResult) {
+				t.Errorf("Handle() = %q, want RESULT=%s", respStr, tt.wantResult)
+			}
+
+			if tt.wantValue {
+				if !strings.Contains(respStr, "VALUE=") {
+					t.Errorf("Handle() = %q, want VALUE=", respStr)
+				}
+				if tt.wantValueMatch != "" && !strings.Contains(respStr, "VALUE="+tt.wantValueMatch) {
+					t.Errorf("Handle() = %q, want VALUE=%s", respStr, tt.wantValueMatch)
+				}
+			}
+		})
+	}
+}
+
+func TestNamingHandler_HostnameLookupWithResolver(t *testing.T) {
+	destB64 := strings.Repeat("C", 516) // Valid base64 destination
+
+	tests := []struct {
+		name           string
+		resolver       *mockDestinationResolver
+		hostname       string
+		wantResult     string
+		wantValue      bool
+		wantValueMatch string
+	}{
+		{
+			name:       "no resolver configured",
+			resolver:   nil,
+			hostname:   "example.i2p",
+			wantResult: protocol.ResultKeyNotFound,
+		},
+		{
+			name: "resolver returns destination",
+			resolver: &mockDestinationResolver{
+				destinations: map[string]string{
+					"example.i2p": destB64,
+				},
+			},
+			hostname:       "example.i2p",
+			wantResult:     protocol.ResultOK,
+			wantValue:      true,
+			wantValueMatch: destB64,
+		},
+		{
+			name: "resolver returns not found",
+			resolver: &mockDestinationResolver{
+				destinations: map[string]string{},
+			},
+			hostname:   "unknown.i2p",
+			wantResult: protocol.ResultKeyNotFound,
+		},
+		{
+			name: "resolver returns error",
+			resolver: &mockDestinationResolver{
+				err: context.DeadlineExceeded,
+			},
+			hostname:   "test.i2p",
+			wantResult: protocol.ResultKeyNotFound,
+		},
+		{
+			name: "case insensitive lookup - uppercase .I2P",
+			resolver: &mockDestinationResolver{
+				destinations: map[string]string{
+					"EXAMPLE.I2P": destB64,
+				},
+			},
+			hostname:       "EXAMPLE.I2P",
+			wantResult:     protocol.ResultOK,
+			wantValue:      true,
+			wantValueMatch: destB64,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := NewNamingHandler(&mockManager{})
+			if tt.resolver != nil {
+				handler.SetDestinationResolver(tt.resolver)
+			}
+
+			ctx := NewContext(&mockConn{}, nil)
+			cmd := &protocol.Command{
+				Verb:   "NAMING",
+				Action: "LOOKUP",
+				Options: map[string]string{
+					"NAME": tt.hostname,
+				},
+			}
+
+			resp, err := handler.Handle(ctx, cmd)
+			if err != nil {
+				t.Fatalf("Handle() error = %v", err)
+			}
+
+			respStr := resp.String()
+			if !strings.Contains(respStr, "RESULT="+tt.wantResult) {
+				t.Errorf("Handle() = %q, want RESULT=%s", respStr, tt.wantResult)
+			}
+
+			if tt.wantValue && !strings.Contains(respStr, "VALUE=") {
+				t.Errorf("Handle() = %q, want VALUE=", respStr)
+			}
+		})
+	}
+}
+
+func TestNamingHandler_Base64DestinationPassthrough(t *testing.T) {
+	// Base64 destinations should be returned as-is without resolver lookup
+	destB64 := strings.Repeat("D", 516)
+
+	handler := NewNamingHandler(&mockManager{})
+	// Don't set a resolver - base64 destinations shouldn't need one
+
+	ctx := NewContext(&mockConn{}, nil)
+	cmd := &protocol.Command{
+		Verb:   "NAMING",
+		Action: "LOOKUP",
+		Options: map[string]string{
+			"NAME": destB64,
+		},
+	}
+
+	resp, err := handler.Handle(ctx, cmd)
+	if err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+
+	respStr := resp.String()
+	if !strings.Contains(respStr, "RESULT=OK") {
+		t.Errorf("Handle() = %q, want RESULT=OK", respStr)
+	}
+	if !strings.Contains(respStr, "VALUE="+destB64) {
+		t.Errorf("Handle() = %q, want VALUE=%s", respStr, destB64)
 	}
 }
