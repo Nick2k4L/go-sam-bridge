@@ -26,6 +26,7 @@ import (
 	"os/signal"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/go-i2p/go-sam-bridge/lib/bridge"
 	"github.com/go-i2p/go-sam-bridge/lib/destination"
@@ -370,8 +371,19 @@ func registerHandlers(server *bridge.Server, cfg *Config, i2cpClient *i2cp.Clien
 
 	log.Debug("Registered RAW handler")
 
-	// Register NAMING handler
+	// Register NAMING handler with resolver and leaseset provider
+	// Note: Resolver requires an active session, so lookups will fail until a session is created
 	namingHandler := handler.NewNamingHandler(destManager)
+
+	// Create destination resolver using the I2CP client (uses first available session)
+	destResolver, err := i2cp.NewClientDestinationResolverAdapter(i2cpClient, 30*time.Second)
+	if err == nil {
+		namingHandler.SetDestinationResolver(destResolver)
+		log.Debug("Wired destination resolver to NAMING handler")
+	} else {
+		log.WithError(err).Warn("Failed to create destination resolver for NAMING handler")
+	}
+
 	router.Register("NAMING LOOKUP", namingHandler)
 
 	log.Debug("Registered NAMING handler")

@@ -237,6 +237,19 @@ func (c *Client) GetSession(samSessionID string) *I2CPSession {
 	return c.sessions[samSessionID]
 }
 
+// GetFirstSession returns any available I2CP session.
+// This is useful for operations like NAMING LOOKUP that need a session
+// for I2CP queries but don't require a specific session.
+// Returns nil if no sessions are registered.
+func (c *Client) GetFirstSession() *I2CPSession {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	for _, sess := range c.sessions {
+		return sess
+	}
+	return nil
+}
+
 // RegisterSession registers an I2CP session with a SAM session ID.
 // This allows looking up sessions by their SAM identifier.
 func (c *Client) RegisterSession(samSessionID string, sess *I2CPSession) {

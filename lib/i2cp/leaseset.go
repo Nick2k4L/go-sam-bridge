@@ -179,3 +179,63 @@ func (a *DestinationResolverAdapter) Resolve(ctx context.Context, name string) (
 
 // Compile-time check that DestinationResolverAdapter implements handler.DestinationResolver.
 var _ handler.DestinationResolver = (*DestinationResolverAdapter)(nil)
+
+// ClientDestinationResolverAdapter implements handler.DestinationResolver using the I2CP client.
+// It uses the first available I2CP session for lookups, making it suitable for global resolver use.
+//
+// This adapter is useful for NAMING LOOKUP commands that may occur before or after
+// specific session creation.
+type ClientDestinationResolverAdapter struct {
+	client  *Client
+	timeout time.Duration
+}
+
+// NewClientDestinationResolverAdapter creates a DestinationResolver adapter using the I2CP client.
+func NewClientDestinationResolverAdapter(client *Client, timeout time.Duration) (*ClientDestinationResolverAdapter, error) {
+	if client == nil {
+		return nil, fmt.Errorf("client cannot be nil")
+	}
+	return &ClientDestinationResolverAdapter{
+		client:  client,
+		timeout: timeout,
+	}, nil
+}
+
+// Resolve looks up an I2P destination by name using any available session.
+// Implements handler.DestinationResolver interface.
+func (a *ClientDestinationResolverAdapter) Resolve(ctx context.Context, name string) (string, error) {
+	if a.client == nil {
+		return "", fmt.Errorf("client not available")
+	}
+
+	// Get the underlying go-i2cp client
+	i2cpClient := a.client.I2CPClient()
+	if i2cpClient == nil {
+		return "", fmt.Errorf("I2CP client not connected")
+	}
+
+	// Get the first available session for lookup
+	session := a.client.GetFirstSession()
+	if session == nil {
+		return "", fmt.Errorf("no active session available for lookup")
+	}
+
+	underlyingSession := session.Session()
+	if underlyingSession == nil {
+		return "", fmt.Errorf("underlying I2CP session not available")
+	}
+
+	dest, err := underlyingSession.LookupDestinationWithContext(ctx, name, a.timeout)
+	if err != nil {
+		return "", err
+	}
+
+	if dest == nil {
+		return "", fmt.Errorf("destination not found: %s", name)
+	}
+
+	return dest.Base64(), nil
+}
+
+// Compile-time check that ClientDestinationResolverAdapter implements handler.DestinationResolver.
+var _ handler.DestinationResolver = (*ClientDestinationResolverAdapter)(nil)
