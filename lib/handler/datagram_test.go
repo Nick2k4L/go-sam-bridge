@@ -378,7 +378,7 @@ func TestDatagramHandler_HandleSend_WithSAM33Options(t *testing.T) {
 	handler := NewDatagramHandler()
 	mockSess := newMockDatagramSession("test-datagram")
 
-	// Test with SAM 3.3 options (parsed but not yet fully implemented)
+	// Test with SAM 3.3 options - now fully parsed and passed to Send()
 	cmd := &protocol.Command{
 		Verb:   protocol.VerbDatagram,
 		Action: protocol.ActionSend,
@@ -388,7 +388,7 @@ func TestDatagramHandler_HandleSend_WithSAM33Options(t *testing.T) {
 			"SEND_TAGS":     "10",
 			"TAG_THRESHOLD": "5",
 			"EXPIRES":       "3600",
-			"SEND_LEASESET": "true",
+			"SEND_LEASESET": "false",
 		},
 		Payload: []byte("hello"),
 	}
@@ -402,9 +402,170 @@ func TestDatagramHandler_HandleSend_WithSAM33Options(t *testing.T) {
 		t.Fatalf("Handle() error = %v", err)
 	}
 
-	// Should succeed even with SAM 3.3 options (they're parsed but unused currently)
+	// Should succeed
 	if resp != nil {
 		t.Errorf("Handle() = %v, want nil for success", resp)
+	}
+
+	// Verify SAM 3.3 options were parsed and passed correctly
+	if mockSess.lastSendOpts.SendTags != 10 {
+		t.Errorf("Send() SendTags = %d, want %d", mockSess.lastSendOpts.SendTags, 10)
+	}
+	if mockSess.lastSendOpts.TagThreshold != 5 {
+		t.Errorf("Send() TagThreshold = %d, want %d", mockSess.lastSendOpts.TagThreshold, 5)
+	}
+	if mockSess.lastSendOpts.Expires != 3600 {
+		t.Errorf("Send() Expires = %d, want %d", mockSess.lastSendOpts.Expires, 3600)
+	}
+	if mockSess.lastSendOpts.SendLeaseset != false {
+		t.Errorf("Send() SendLeaseset = %v, want %v", mockSess.lastSendOpts.SendLeaseset, false)
+	}
+	if mockSess.lastSendOpts.SendLeasesetSet != true {
+		t.Errorf("Send() SendLeasesetSet = %v, want %v (explicitly set)", mockSess.lastSendOpts.SendLeasesetSet, true)
+	}
+}
+
+func TestDatagramHandler_HandleSend_SAM33OptionsDefaults(t *testing.T) {
+	handler := NewDatagramHandler()
+	mockSess := newMockDatagramSession("test-datagram")
+
+	// Test without SAM 3.3 options - should use defaults
+	cmd := &protocol.Command{
+		Verb:   protocol.VerbDatagram,
+		Action: protocol.ActionSend,
+		Options: map[string]string{
+			"DESTINATION": "test.i2p",
+			"SIZE":        "5",
+		},
+		Payload: []byte("hello"),
+	}
+
+	ctx := NewContext(&mockConn{}, newMockRegistry())
+	ctx.HandshakeComplete = true
+	ctx.BindSession(mockSess)
+
+	resp, err := handler.Handle(ctx, cmd)
+	if err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+
+	if resp != nil {
+		t.Errorf("Handle() = %v, want nil for success", resp)
+	}
+
+	// Verify defaults
+	if mockSess.lastSendOpts.SendTags != 0 {
+		t.Errorf("Send() SendTags = %d, want %d (default)", mockSess.lastSendOpts.SendTags, 0)
+	}
+	if mockSess.lastSendOpts.TagThreshold != 0 {
+		t.Errorf("Send() TagThreshold = %d, want %d (default)", mockSess.lastSendOpts.TagThreshold, 0)
+	}
+	if mockSess.lastSendOpts.Expires != 0 {
+		t.Errorf("Send() Expires = %d, want %d (default)", mockSess.lastSendOpts.Expires, 0)
+	}
+	if mockSess.lastSendOpts.SendLeaseset != true {
+		t.Errorf("Send() SendLeaseset = %v, want %v (default)", mockSess.lastSendOpts.SendLeaseset, true)
+	}
+	if mockSess.lastSendOpts.SendLeasesetSet != false {
+		t.Errorf("Send() SendLeasesetSet = %v, want %v (not explicitly set)", mockSess.lastSendOpts.SendLeasesetSet, false)
+	}
+}
+
+func TestDatagramHandler_HandleSend_SAM33OptionsValidation(t *testing.T) {
+	handler := NewDatagramHandler()
+
+	tests := []struct {
+		name    string
+		options map[string]string
+		wantErr string
+	}{
+		{
+			name: "SEND_TAGS out of range (too high)",
+			options: map[string]string{
+				"DESTINATION": "test.i2p",
+				"SIZE":        "5",
+				"SEND_TAGS":   "16", // Max is 15
+			},
+			wantErr: "SEND_TAGS: value must be 0-15",
+		},
+		{
+			name: "SEND_TAGS negative",
+			options: map[string]string{
+				"DESTINATION": "test.i2p",
+				"SIZE":        "5",
+				"SEND_TAGS":   "-1",
+			},
+			wantErr: "SEND_TAGS: value must be 0-15",
+		},
+		{
+			name: "SEND_TAGS non-numeric",
+			options: map[string]string{
+				"DESTINATION": "test.i2p",
+				"SIZE":        "5",
+				"SEND_TAGS":   "abc",
+			},
+			wantErr: "SEND_TAGS: invalid value",
+		},
+		{
+			name: "TAG_THRESHOLD out of range",
+			options: map[string]string{
+				"DESTINATION":   "test.i2p",
+				"SIZE":          "5",
+				"TAG_THRESHOLD": "20",
+			},
+			wantErr: "TAG_THRESHOLD: value must be 0-15",
+		},
+		{
+			name: "EXPIRES out of range",
+			options: map[string]string{
+				"DESTINATION": "test.i2p",
+				"SIZE":        "5",
+				"EXPIRES":     "100000", // > 86400 (24 hours)
+			},
+			wantErr: "EXPIRES: value must be 0-86400",
+		},
+		{
+			name: "SEND_LEASESET invalid value",
+			options: map[string]string{
+				"DESTINATION":   "test.i2p",
+				"SIZE":          "5",
+				"SEND_LEASESET": "maybe",
+			},
+			wantErr: "SEND_LEASESET: must be true or false",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockSess := newMockDatagramSession("test-datagram")
+			ctx := NewContext(&mockConn{}, newMockRegistry())
+			ctx.HandshakeComplete = true
+			ctx.BindSession(mockSess)
+
+			cmd := &protocol.Command{
+				Verb:    protocol.VerbDatagram,
+				Action:  protocol.ActionSend,
+				Options: tt.options,
+				Payload: []byte("hello"),
+			}
+
+			resp, err := handler.Handle(ctx, cmd)
+			if err != nil {
+				t.Fatalf("Handle() error = %v", err)
+			}
+
+			if resp == nil {
+				t.Fatal("Handle() returned nil, want error response")
+			}
+
+			respStr := resp.String()
+			if !strings.Contains(respStr, "RESULT="+protocol.ResultInvalidKey) {
+				t.Errorf("Handle() = %q, want RESULT=%s", respStr, protocol.ResultInvalidKey)
+			}
+			if !strings.Contains(respStr, tt.wantErr) {
+				t.Errorf("Handle() = %q, want error containing %q", respStr, tt.wantErr)
+			}
+		})
 	}
 }
 

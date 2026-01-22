@@ -83,7 +83,7 @@ func NewDatagramSession(
 // Parameters:
 //   - dest: Base64-encoded I2P destination or .i2p hostname
 //   - data: Datagram payload (minimum 1 byte, max ~31KB for reliability)
-//   - opts: Send options (FromPort, ToPort)
+//   - opts: Send options (FromPort, ToPort, and SAM 3.3 options)
 //
 // Returns error if:
 //   - Session is not active
@@ -94,7 +94,8 @@ func NewDatagramSession(
 // Per SAM specification, DATAGRAM SEND on bridge socket is supported.
 // As of SAM 3.2, FROM_PORT and TO_PORT options are supported.
 // As of SAM 3.3, SEND_TAGS, TAG_THRESHOLD, EXPIRES, SEND_LEASESET options
-// are supported (not yet implemented).
+// are supported and passed via opts. When go-i2cp integration is complete,
+// these will be passed to SendMessageExpires() with BuildSendMessageFlags().
 func (d *DatagramSessionImpl) Send(dest string, data []byte, opts DatagramSendOptions) error {
 	d.mu.RLock()
 	if d.Status() != StatusActive {

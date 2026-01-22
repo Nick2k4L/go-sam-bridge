@@ -140,6 +140,44 @@ func (h *RawHandler) handleSend(ctx *Context, cmd *protocol.Command) (*protocol.
 		}
 	}
 
+	// Parse optional SAM 3.3 options
+	// These are passed to I2CP via SendMessageExpires when go-i2cp integration is complete.
+	// Per SAMv3.md: "Support by the SAM server is optional, it will ignore these
+	// options if unsupported."
+	sendTags := 0
+	if sendTagsStr := cmd.Get("SEND_TAGS"); sendTagsStr != "" {
+		sendTags, err = parseRawSAM33Option(sendTagsStr, "SEND_TAGS", 0, 15)
+		if err != nil {
+			return rawInvalidKey(err.Error()), nil
+		}
+	}
+
+	tagThreshold := 0
+	if tagThresholdStr := cmd.Get("TAG_THRESHOLD"); tagThresholdStr != "" {
+		tagThreshold, err = parseRawSAM33Option(tagThresholdStr, "TAG_THRESHOLD", 0, 15)
+		if err != nil {
+			return rawInvalidKey(err.Error()), nil
+		}
+	}
+
+	expires := 0
+	if expiresStr := cmd.Get("EXPIRES"); expiresStr != "" {
+		expires, err = parseRawSAM33Option(expiresStr, "EXPIRES", 0, 86400) // Max 24 hours
+		if err != nil {
+			return rawInvalidKey(err.Error()), nil
+		}
+	}
+
+	sendLeaseset := true // Default per SAMv3.md
+	sendLeasesetSet := false
+	if sendLeasesetStr := cmd.Get("SEND_LEASESET"); sendLeasesetStr != "" {
+		sendLeaseset, err = parseRawBoolOption(sendLeasesetStr, "SEND_LEASESET")
+		if err != nil {
+			return rawInvalidKey(err.Error()), nil
+		}
+		sendLeasesetSet = true
+	}
+
 	// Get payload data from command
 	// NOTE: The actual data follows the command line and is SIZE bytes.
 	// For now, we get it from cmd.Payload which should be populated by the parser.
@@ -148,11 +186,16 @@ func (h *RawHandler) handleSend(ctx *Context, cmd *protocol.Command) (*protocol.
 		return rawError(fmt.Sprintf("payload size mismatch: expected %d, got %d", size, len(data))), nil
 	}
 
-	// Build send options
+	// Build send options including SAM 3.3 options
 	opts := session.RawSendOptions{
-		FromPort: fromPort,
-		ToPort:   toPort,
-		Protocol: protocolNum,
+		FromPort:        fromPort,
+		ToPort:          toPort,
+		Protocol:        protocolNum,
+		SendTags:        sendTags,
+		TagThreshold:    tagThreshold,
+		Expires:         expires,
+		SendLeaseset:    sendLeaseset,
+		SendLeasesetSet: sendLeasesetSet,
 	}
 
 	// Send the raw datagram
@@ -175,6 +218,32 @@ func parsePort(s, name string) (int, error) {
 		return 0, fmt.Errorf("%s: port must be 0-65535", name)
 	}
 	return port, nil
+}
+
+// parseRawSAM33Option parses a SAM 3.3 integer option with range validation.
+// Per SAMv3.md, these options are optional and have router-dependent defaults.
+func parseRawSAM33Option(s, name string, min, max int) (int, error) {
+	val, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, fmt.Errorf("%s: invalid value", name)
+	}
+	if val < min || val > max {
+		return 0, fmt.Errorf("%s: value must be %d-%d", name, min, max)
+	}
+	return val, nil
+}
+
+// parseRawBoolOption parses a boolean option value.
+// Accepts "true"/"false" (case-insensitive) per SAM specification.
+func parseRawBoolOption(s, name string) (bool, error) {
+	switch s {
+	case "true", "TRUE", "True":
+		return true, nil
+	case "false", "FALSE", "False":
+		return false, nil
+	default:
+		return false, fmt.Errorf("%s: must be true or false", name)
+	}
 }
 
 // parseProtocol validates and parses a protocol string.

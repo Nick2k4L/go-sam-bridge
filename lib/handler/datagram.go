@@ -134,12 +134,43 @@ func (h *DatagramHandler) handleSend(ctx *Context, cmd *protocol.Command) (*prot
 		}
 	}
 
-	// Parse optional SAM 3.3 options (logged but not yet fully implemented)
-	// These are parsed for protocol completeness and future go-datagrams integration
-	_ = cmd.Get("SEND_TAGS")     // Number of tags to send
-	_ = cmd.Get("TAG_THRESHOLD") // Threshold for requesting more tags
-	_ = cmd.Get("EXPIRES")       // Message expiration time
-	_ = cmd.Get("SEND_LEASESET") // Whether to include leaseset
+	// Parse optional SAM 3.3 options
+	// These are passed to I2CP via SendMessageExpires when go-i2cp integration is complete.
+	// Per SAMv3.md: "Support by the SAM server is optional, it will ignore these
+	// options if unsupported."
+	sendTags := 0
+	if sendTagsStr := cmd.Get("SEND_TAGS"); sendTagsStr != "" {
+		sendTags, err = parseSAM33Option(sendTagsStr, "SEND_TAGS", 0, 15)
+		if err != nil {
+			return datagramInvalidKey(err.Error()), nil
+		}
+	}
+
+	tagThreshold := 0
+	if tagThresholdStr := cmd.Get("TAG_THRESHOLD"); tagThresholdStr != "" {
+		tagThreshold, err = parseSAM33Option(tagThresholdStr, "TAG_THRESHOLD", 0, 15)
+		if err != nil {
+			return datagramInvalidKey(err.Error()), nil
+		}
+	}
+
+	expires := 0
+	if expiresStr := cmd.Get("EXPIRES"); expiresStr != "" {
+		expires, err = parseSAM33Option(expiresStr, "EXPIRES", 0, 86400) // Max 24 hours
+		if err != nil {
+			return datagramInvalidKey(err.Error()), nil
+		}
+	}
+
+	sendLeaseset := true // Default per SAMv3.md
+	sendLeasesetSet := false
+	if sendLeasesetStr := cmd.Get("SEND_LEASESET"); sendLeasesetStr != "" {
+		sendLeaseset, err = parseBoolOption(sendLeasesetStr, "SEND_LEASESET")
+		if err != nil {
+			return datagramInvalidKey(err.Error()), nil
+		}
+		sendLeasesetSet = true
+	}
 
 	// Get payload data from command
 	// NOTE: The actual data follows the command line and is SIZE bytes.
@@ -149,10 +180,15 @@ func (h *DatagramHandler) handleSend(ctx *Context, cmd *protocol.Command) (*prot
 		return datagramError(fmt.Sprintf("payload size mismatch: expected %d, got %d", size, len(data))), nil
 	}
 
-	// Build send options
+	// Build send options including SAM 3.3 options
 	opts := session.DatagramSendOptions{
-		FromPort: fromPort,
-		ToPort:   toPort,
+		FromPort:        fromPort,
+		ToPort:          toPort,
+		SendTags:        sendTags,
+		TagThreshold:    tagThreshold,
+		Expires:         expires,
+		SendLeaseset:    sendLeaseset,
+		SendLeasesetSet: sendLeasesetSet,
 	}
 
 	// Send the datagram
@@ -175,6 +211,32 @@ func parseDatagramPort(s, name string) (int, error) {
 		return 0, fmt.Errorf("%s: port must be 0-65535", name)
 	}
 	return port, nil
+}
+
+// parseSAM33Option parses a SAM 3.3 integer option with range validation.
+// Per SAMv3.md, these options are optional and have router-dependent defaults.
+func parseSAM33Option(s, name string, min, max int) (int, error) {
+	val, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, fmt.Errorf("%s: invalid value", name)
+	}
+	if val < min || val > max {
+		return 0, fmt.Errorf("%s: value must be %d-%d", name, min, max)
+	}
+	return val, nil
+}
+
+// parseBoolOption parses a boolean option value.
+// Accepts "true"/"false" (case-insensitive) per SAM specification.
+func parseBoolOption(s, name string) (bool, error) {
+	switch s {
+	case "true", "TRUE", "True":
+		return true, nil
+	case "false", "FALSE", "False":
+		return false, nil
+	default:
+		return false, fmt.Errorf("%s: must be true or false", name)
+	}
 }
 
 // FormatDatagramReceived creates a DATAGRAM RECEIVED response for incoming datagrams.

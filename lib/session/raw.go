@@ -118,7 +118,7 @@ func (r *RawSessionImpl) HeaderEnabled() bool {
 // Parameters:
 //   - dest: Base64-encoded I2P destination or .i2p hostname
 //   - data: Datagram payload (minimum 1 byte, max ~11KB recommended for reliability)
-//   - opts: Send options (FromPort, ToPort, Protocol override)
+//   - opts: Send options (FromPort, ToPort, Protocol override, and SAM 3.3 options)
 //
 // Returns error if:
 //   - Session is not active
@@ -128,6 +128,9 @@ func (r *RawSessionImpl) HeaderEnabled() bool {
 //
 // Per SAM specification, RAW SEND on bridge socket was added in SAM 3.1.
 // As of SAM 3.2, FROM_PORT, TO_PORT, and PROTOCOL options are supported.
+// As of SAM 3.3, SEND_TAGS, TAG_THRESHOLD, EXPIRES, SEND_LEASESET options
+// are supported and passed via opts. When go-i2cp integration is complete,
+// these will be passed to SendMessageExpires() with BuildSendMessageFlags().
 func (r *RawSessionImpl) Send(dest string, data []byte, opts RawSendOptions) error {
 	r.mu.RLock()
 	if r.Status() != StatusActive {

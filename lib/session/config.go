@@ -191,6 +191,31 @@ type DatagramSendOptions struct {
 	FromPort int
 	// ToPort overrides session default destination port (SAM 3.2+).
 	ToPort int
+
+	// SAM 3.3 options - passed to I2CP SendMessageExpires
+
+	// SendTags specifies the number of session tags to send (SAM 3.3+).
+	// Overrides crypto.tagsToSend I2CP session option.
+	// Default is router-dependent (40 for Java router).
+	// Value range: 0-15 (4 bits in I2CP flags).
+	SendTags int
+	// TagThreshold specifies the low session tag threshold (SAM 3.3+).
+	// Overrides crypto.lowTagThreshold I2CP session option.
+	// Default is router-dependent (30 for Java router).
+	// Value range: 0-15 (4 bits in I2CP flags).
+	TagThreshold int
+	// Expires specifies expiration from now in seconds (SAM 3.3+).
+	// Overrides clientMessageTimeout I2CP session option.
+	// Default is router-dependent (60 for Java router).
+	// Value 0 means use default.
+	Expires int
+	// SendLeaseset specifies whether to bundle our leaseset (SAM 3.3+).
+	// Overrides shouldBundleReplyInfo I2CP session option.
+	// Default is true.
+	SendLeaseset bool
+	// SendLeasesetSet indicates whether SendLeaseset was explicitly set.
+	// This allows distinguishing between "false" and "not specified".
+	SendLeasesetSet bool
 }
 
 // RawSendOptions holds options for RAW SEND operations.
@@ -202,6 +227,31 @@ type RawSendOptions struct {
 	ToPort int
 	// Protocol overrides session default I2CP protocol (SAM 3.2+).
 	Protocol int
+
+	// SAM 3.3 options - passed to I2CP SendMessageExpires
+
+	// SendTags specifies the number of session tags to send (SAM 3.3+).
+	// Overrides crypto.tagsToSend I2CP session option.
+	// Default is router-dependent (40 for Java router).
+	// Value range: 0-15 (4 bits in I2CP flags).
+	SendTags int
+	// TagThreshold specifies the low session tag threshold (SAM 3.3+).
+	// Overrides crypto.lowTagThreshold I2CP session option.
+	// Default is router-dependent (30 for Java router).
+	// Value range: 0-15 (4 bits in I2CP flags).
+	TagThreshold int
+	// Expires specifies expiration from now in seconds (SAM 3.3+).
+	// Overrides clientMessageTimeout I2CP session option.
+	// Default is router-dependent (60 for Java router).
+	// Value 0 means use default.
+	Expires int
+	// SendLeaseset specifies whether to bundle our leaseset (SAM 3.3+).
+	// Overrides shouldBundleReplyInfo I2CP session option.
+	// Default is true.
+	SendLeaseset bool
+	// SendLeasesetSet indicates whether SendLeaseset was explicitly set.
+	// This allows distinguishing between "false" and "not specified".
+	SendLeasesetSet bool
 }
 
 // SubsessionOptions holds options for SESSION ADD operations on PRIMARY sessions.

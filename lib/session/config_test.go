@@ -440,6 +440,40 @@ func TestDatagramSendOptions(t *testing.T) {
 	}
 }
 
+func TestDatagramSendOptions_SAM33(t *testing.T) {
+	opts := DatagramSendOptions{
+		FromPort:        1234,
+		ToPort:          5678,
+		SendTags:        10,
+		TagThreshold:    5,
+		Expires:         3600,
+		SendLeaseset:    false,
+		SendLeasesetSet: true,
+	}
+
+	if opts.FromPort != 1234 {
+		t.Errorf("FromPort = %d, want 1234", opts.FromPort)
+	}
+	if opts.ToPort != 5678 {
+		t.Errorf("ToPort = %d, want 5678", opts.ToPort)
+	}
+	if opts.SendTags != 10 {
+		t.Errorf("SendTags = %d, want 10", opts.SendTags)
+	}
+	if opts.TagThreshold != 5 {
+		t.Errorf("TagThreshold = %d, want 5", opts.TagThreshold)
+	}
+	if opts.Expires != 3600 {
+		t.Errorf("Expires = %d, want 3600", opts.Expires)
+	}
+	if opts.SendLeaseset != false {
+		t.Errorf("SendLeaseset = %v, want false", opts.SendLeaseset)
+	}
+	if opts.SendLeasesetSet != true {
+		t.Errorf("SendLeasesetSet = %v, want true", opts.SendLeasesetSet)
+	}
+}
+
 func TestRawSendOptions(t *testing.T) {
 	opts := RawSendOptions{
 		FromPort: 1234,
@@ -455,6 +489,44 @@ func TestRawSendOptions(t *testing.T) {
 	}
 	if opts.Protocol != 18 {
 		t.Errorf("Protocol = %d, want 18", opts.Protocol)
+	}
+}
+
+func TestRawSendOptions_SAM33(t *testing.T) {
+	opts := RawSendOptions{
+		FromPort:        1234,
+		ToPort:          5678,
+		Protocol:        18,
+		SendTags:        8,
+		TagThreshold:    3,
+		Expires:         1800,
+		SendLeaseset:    true,
+		SendLeasesetSet: true,
+	}
+
+	if opts.FromPort != 1234 {
+		t.Errorf("FromPort = %d, want 1234", opts.FromPort)
+	}
+	if opts.ToPort != 5678 {
+		t.Errorf("ToPort = %d, want 5678", opts.ToPort)
+	}
+	if opts.Protocol != 18 {
+		t.Errorf("Protocol = %d, want 18", opts.Protocol)
+	}
+	if opts.SendTags != 8 {
+		t.Errorf("SendTags = %d, want 8", opts.SendTags)
+	}
+	if opts.TagThreshold != 3 {
+		t.Errorf("TagThreshold = %d, want 3", opts.TagThreshold)
+	}
+	if opts.Expires != 1800 {
+		t.Errorf("Expires = %d, want 1800", opts.Expires)
+	}
+	if opts.SendLeaseset != true {
+		t.Errorf("SendLeaseset = %v, want true", opts.SendLeaseset)
+	}
+	if opts.SendLeasesetSet != true {
+		t.Errorf("SendLeasesetSet = %v, want true", opts.SendLeasesetSet)
 	}
 }
 
