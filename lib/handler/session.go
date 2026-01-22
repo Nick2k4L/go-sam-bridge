@@ -2,10 +2,12 @@
 package handler
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-i2p/go-sam-bridge/lib/destination"
 	"github.com/go-i2p/go-sam-bridge/lib/protocol"
@@ -13,15 +15,37 @@ import (
 	"github.com/go-i2p/go-sam-bridge/lib/util"
 )
 
+// DefaultTunnelBuildTimeout is the default timeout for tunnel building.
+// Per SAMv3.md: "the router builds tunnels before responding with SESSION STATUS.
+// This could take several seconds."
+const DefaultTunnelBuildTimeout = 60 * time.Second
+
 // SessionHandler handles SESSION CREATE commands per SAM 3.0-3.3.
 // Creates new SAM sessions with I2P destinations.
 type SessionHandler struct {
-	destManager destination.Manager
+	destManager        destination.Manager
+	i2cpProvider       session.I2CPSessionProvider
+	tunnelBuildTimeout time.Duration
 }
 
 // NewSessionHandler creates a new SESSION handler with the given destination manager.
 func NewSessionHandler(destManager destination.Manager) *SessionHandler {
-	return &SessionHandler{destManager: destManager}
+	return &SessionHandler{
+		destManager:        destManager,
+		tunnelBuildTimeout: DefaultTunnelBuildTimeout,
+	}
+}
+
+// SetI2CPProvider sets the I2CP session provider for creating I2CP sessions.
+// ISSUE-003: When set, SESSION CREATE will wait for tunnels before responding.
+func (h *SessionHandler) SetI2CPProvider(provider session.I2CPSessionProvider) {
+	h.i2cpProvider = provider
+}
+
+// SetTunnelBuildTimeout sets the timeout for waiting for tunnels to build.
+// Default is 60 seconds per SAM specification guidance.
+func (h *SessionHandler) SetTunnelBuildTimeout(timeout time.Duration) {
+	h.tunnelBuildTimeout = timeout
 }
 
 // Handle processes a SESSION command.
@@ -112,6 +136,32 @@ func (h *SessionHandler) handleCreate(ctx *Context, cmd *protocol.Command) (*pro
 	newSession, err := h.createSession(id, style, dest, ctx.Conn, config, cmd)
 	if err != nil {
 		return sessionError(err.Error()), nil
+	}
+
+	// ISSUE-003: Create I2CP session and wait for tunnels if provider is set.
+	// Per SAMv3.md: "the router builds tunnels before responding with SESSION STATUS.
+	// This could take several seconds."
+	if h.i2cpProvider != nil && h.i2cpProvider.IsConnected() {
+		i2cpHandle, err := h.createI2CPSession(ctx.Ctx, id, config)
+		if err != nil {
+			newSession.Close()
+			return sessionI2PError(fmt.Sprintf("failed to create I2P session: %v", err)), nil
+		}
+
+		// Associate I2CP session with the SAM session
+		if baseSession, ok := newSession.(*session.BaseSession); ok {
+			baseSession.SetI2CPSession(i2cpHandle)
+		}
+
+		// Wait for tunnels to be built before returning success
+		tunnelCtx, cancel := context.WithTimeout(ctx.Ctx, h.tunnelBuildTimeout)
+		defer cancel()
+
+		if err := i2cpHandle.WaitForTunnels(tunnelCtx); err != nil {
+			// Close both sessions on timeout/error
+			newSession.Close()
+			return sessionI2PError(fmt.Sprintf("tunnel build failed: %v", err)), nil
+		}
 	}
 
 	// Register the session
@@ -506,6 +556,22 @@ func (h *SessionHandler) parseConfig(cmd *protocol.Command, style session.Style)
 		config.HeaderEnabled = (v == "true")
 	}
 
+	// Parse sam.udp.host and sam.udp.port options (Java I2P specific)
+	// Per SAMv3.md: These options configure the UDP datagram binding for DATAGRAM sessions.
+	// ISSUE-004: Previously these were passed through but not explicitly parsed.
+	if v := cmd.Get("sam.udp.host"); v != "" {
+		parsedOptions["sam.udp.host"] = true
+		config.SamUDPHost = v
+	}
+	if v := cmd.Get("sam.udp.port"); v != "" {
+		parsedOptions["sam.udp.port"] = true
+		port, err := protocol.ValidatePortString(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid sam.udp.port: %w", err)
+		}
+		config.SamUDPPort = port
+	}
+
 	// Collect unparsed i2cp.* and streaming.* options for I2CP passthrough.
 	// Per SAMv3.md: "Additional options given are passed to the I2P session
 	// configuration (see I2CP options)."
@@ -870,6 +936,28 @@ func sessionError(msg string) *protocol.Response {
 		WithAction(protocol.ActionStatus).
 		WithResult(protocol.ResultI2PError).
 		WithMessage(msg)
+}
+
+// sessionI2PError returns an I2P_ERROR response with additional context.
+// Used for I2CP and tunnel-related errors.
+// ISSUE-003: Provides detailed error messages for tunnel build failures.
+func sessionI2PError(msg string) *protocol.Response {
+	return protocol.NewResponse(protocol.VerbSession).
+		WithAction(protocol.ActionStatus).
+		WithResult(protocol.ResultI2PError).
+		WithMessage(msg)
+}
+
+// createI2CPSession creates an I2CP session using the configured provider.
+// ISSUE-003: Implements tunnel allocation for SESSION CREATE.
+func (h *SessionHandler) createI2CPSession(ctx context.Context, sessionID string, config *session.SessionConfig) (session.I2CPSessionHandle, error) {
+	if h.i2cpProvider == nil {
+		return nil, fmt.Errorf("no I2CP provider configured")
+	}
+	if !h.i2cpProvider.IsConnected() {
+		return nil, fmt.Errorf("I2CP provider not connected")
+	}
+	return h.i2cpProvider.CreateSessionForSAM(ctx, sessionID, config)
 }
 
 // sessionErr is an error type for session handler errors.

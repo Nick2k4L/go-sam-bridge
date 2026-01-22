@@ -2,6 +2,7 @@
 package session
 
 import (
+	"context"
 	"net"
 	"sync"
 )
@@ -18,6 +19,10 @@ type BaseSession struct {
 	status      Status
 	controlConn net.Conn
 	config      *SessionConfig
+
+	// i2cpSession holds the I2CP session handle for tunnel management.
+	// ISSUE-003: Used to wait for tunnel readiness and manage I2CP lifecycle.
+	i2cpSession I2CPSessionHandle
 }
 
 // NewBaseSession creates a new BaseSession with the given parameters.
@@ -122,14 +127,30 @@ func (b *BaseSession) Close() error {
 
 	b.status = StatusClosing
 
-	var err error
+	var errs []error
+
+	// Close I2CP session first
+	if b.i2cpSession != nil {
+		if err := b.i2cpSession.Close(); err != nil {
+			errs = append(errs, err)
+		}
+		b.i2cpSession = nil
+	}
+
+	// Close control connection
 	if b.controlConn != nil {
-		err = b.controlConn.Close()
+		if err := b.controlConn.Close(); err != nil {
+			errs = append(errs, err)
+		}
 		b.controlConn = nil
 	}
 
 	b.status = StatusClosed
-	return err
+
+	if len(errs) > 0 {
+		return errs[0] // Return first error
+	}
+	return nil
 }
 
 // IsClosed returns true if the session has been closed.
@@ -144,4 +165,35 @@ func (b *BaseSession) IsActive() bool {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return b.status == StatusActive
+}
+
+// SetI2CPSession sets the I2CP session handle.
+// ISSUE-003: Allows handler to associate I2CP session with SAM session.
+func (b *BaseSession) SetI2CPSession(i2cp I2CPSessionHandle) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.i2cpSession = i2cp
+}
+
+// I2CPSession returns the I2CP session handle, if set.
+func (b *BaseSession) I2CPSession() I2CPSessionHandle {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.i2cpSession
+}
+
+// WaitForTunnels blocks until tunnels are built or context is cancelled.
+// Per SAMv3.md: "the router builds tunnels before responding with SESSION STATUS.
+// This could take several seconds."
+// ISSUE-003: Use this to block SESSION STATUS response until tunnels are ready.
+// Returns nil immediately if no I2CP session is set.
+func (b *BaseSession) WaitForTunnels(ctx context.Context) error {
+	b.mu.RLock()
+	i2cp := b.i2cpSession
+	b.mu.RUnlock()
+
+	if i2cp == nil {
+		return nil // No I2CP session, don't block
+	}
+	return i2cp.WaitForTunnels(ctx)
 }

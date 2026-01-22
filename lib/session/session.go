@@ -5,8 +5,42 @@
 package session
 
 import (
+	"context"
 	"net"
 )
+
+// I2CPSessionHandle represents a handle to an I2CP session.
+// This interface abstracts the underlying I2CP session to avoid
+// circular imports between session and i2cp packages.
+// ISSUE-003: Provides tunnel waiting capability for SESSION CREATE.
+type I2CPSessionHandle interface {
+	// WaitForTunnels blocks until tunnels are built or context is cancelled.
+	// Per SAMv3.md: "the router builds tunnels before responding with SESSION STATUS.
+	// This could take several seconds."
+	WaitForTunnels(ctx context.Context) error
+
+	// IsTunnelReady returns true if tunnels are built and ready.
+	IsTunnelReady() bool
+
+	// Close closes the I2CP session.
+	Close() error
+
+	// DestinationBase64 returns the base64-encoded destination.
+	DestinationBase64() string
+}
+
+// I2CPSessionProvider creates I2CP sessions for SAM sessions.
+// This interface is implemented by lib/i2cp.Client.
+// ISSUE-003: Enables session handler to create I2CP sessions and wait for tunnels.
+type I2CPSessionProvider interface {
+	// CreateSessionForSAM creates an I2CP session for a SAM session.
+	// The session will have tunnels allocated but may not be ready yet.
+	// Use the returned handle's WaitForTunnels() to block until ready.
+	CreateSessionForSAM(ctx context.Context, samSessionID string, config *SessionConfig) (I2CPSessionHandle, error)
+
+	// IsConnected returns true if the provider is connected to the I2P router.
+	IsConnected() bool
+}
 
 // Status represents the current state of a session per SAM lifecycle.
 type Status int

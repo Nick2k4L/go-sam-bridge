@@ -903,16 +903,34 @@ func TestSessionHandler_ParseConfig(t *testing.T) {
 			},
 		},
 		{
-			name: "sam options passthrough",
+			name: "sam.udp options explicit parsing",
 			options: map[string]string{
 				"sam.udp.host": "localhost",
 				"sam.udp.port": "7655",
 			},
 			style: session.StyleDatagram,
 			check: func(c *session.SessionConfig) bool {
-				return c.I2CPOptions["sam.udp.host"] == "localhost" &&
-					c.I2CPOptions["sam.udp.port"] == "7655"
+				// ISSUE-004: sam.udp.host and sam.udp.port are now explicitly parsed
+				return c.SamUDPHost == "localhost" && c.SamUDPPort == 7655
 			},
+		},
+		{
+			name: "sam.udp.port invalid - too large",
+			options: map[string]string{
+				"sam.udp.port": "99999",
+			},
+			style:     session.StyleDatagram,
+			wantErr:   true,
+			errSubstr: "sam.udp.port",
+		},
+		{
+			name: "sam.udp.port invalid - negative",
+			options: map[string]string{
+				"sam.udp.port": "-1",
+			},
+			style:     session.StyleDatagram,
+			wantErr:   true,
+			errSubstr: "sam.udp.port",
 		},
 		{
 			name: "inbound.backupQuantity passthrough (not explicitly parsed)",

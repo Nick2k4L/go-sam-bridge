@@ -296,3 +296,64 @@ func (c *Client) SetCallbacks(callbacks *ClientCallbacks) {
 	defer c.mu.Unlock()
 	c.callbacks = callbacks
 }
+
+// CreateSessionForSAM creates an I2CP session for a SAM session and returns
+// a handle implementing session.I2CPSessionHandle.
+// This method satisfies the session.I2CPSessionProvider interface.
+//
+// ISSUE-003: Enables session handler to create I2CP sessions and wait for tunnels.
+//
+// Per SAMv3.md: "the router builds tunnels before responding with SESSION STATUS.
+// This could take several seconds."
+// Use the returned handle's WaitForTunnels() to block until ready.
+func (c *Client) CreateSessionForSAM(ctx context.Context, samSessionID string, config *SessionConfigFromSession) (I2CPSessionHandleFromSession, error) {
+	// Convert session.SessionConfig to i2cp.SessionConfig
+	i2cpConfig := DefaultSessionConfig()
+	if config != nil {
+		i2cpConfig.SignatureType = config.SignatureType
+		if len(config.EncryptionTypes) > 0 {
+			i2cpConfig.EncryptionTypes = config.EncryptionTypes
+		}
+		i2cpConfig.InboundQuantity = config.InboundQuantity
+		i2cpConfig.OutboundQuantity = config.OutboundQuantity
+		i2cpConfig.InboundLength = config.InboundLength
+		i2cpConfig.OutboundLength = config.OutboundLength
+		i2cpConfig.InboundBackupQuantity = config.InboundBackupQuantity
+		i2cpConfig.OutboundBackupQuantity = config.OutboundBackupQuantity
+		i2cpConfig.FastReceive = config.FastReceive
+		i2cpConfig.ReduceIdleTime = config.ReduceIdleTime
+		i2cpConfig.CloseIdleTime = config.CloseIdleTime
+	}
+
+	// Create the I2CP session
+	return c.CreateSession(ctx, samSessionID, i2cpConfig)
+}
+
+// SessionConfigFromSession is an alias type for session package configs.
+// We use this to avoid importing session package and creating circular deps.
+// The actual conversion happens at the call site.
+type SessionConfigFromSession = struct {
+	SignatureType          int
+	EncryptionTypes        []int
+	InboundQuantity        int
+	OutboundQuantity       int
+	InboundLength          int
+	OutboundLength         int
+	InboundBackupQuantity  int
+	OutboundBackupQuantity int
+	FastReceive            bool
+	ReduceIdleTime         int
+	CloseIdleTime          int
+}
+
+// I2CPSessionHandleFromSession is an alias for the session.I2CPSessionHandle interface.
+// We define it here to avoid importing session package.
+type I2CPSessionHandleFromSession interface {
+	WaitForTunnels(ctx context.Context) error
+	IsTunnelReady() bool
+	Close() error
+	DestinationBase64() string
+}
+
+// Compile-time check that I2CPSession implements I2CPSessionHandleFromSession.
+var _ I2CPSessionHandleFromSession = (*I2CPSession)(nil)

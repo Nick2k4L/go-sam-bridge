@@ -41,6 +41,14 @@ type I2CPSession struct {
 
 	// callbacks holds session-level callbacks.
 	callbacks *SessionCallbacks
+
+	// tunnelReady is closed when tunnels are built and ready.
+	// Per SAMv3.md: "the router builds tunnels before responding with SESSION STATUS"
+	// ISSUE-003: Used to block SESSION STATUS response until tunnels are ready.
+	tunnelReady chan struct{}
+
+	// tunnelReadyOnce ensures tunnelReady is only closed once.
+	tunnelReadyOnce sync.Once
 }
 
 // SessionConfig holds configuration for an I2CP session.
@@ -142,6 +150,7 @@ func (c *Client) CreateSession(ctx context.Context, samSessionID string, config 
 		config:       config,
 		samSessionID: samSessionID,
 		created:      time.Now(),
+		tunnelReady:  make(chan struct{}),
 	}
 
 	// Set up session callbacks - match go-i2cp SessionCallbacks signature
@@ -273,6 +282,19 @@ func (sess *I2CPSession) Destination() *go_i2cp.Destination {
 	return sess.destination
 }
 
+// DestinationBase64 returns the base64-encoded destination.
+// Implements session.I2CPSessionHandle interface.
+func (sess *I2CPSession) DestinationBase64() string {
+	sess.mu.RLock()
+	dest := sess.destination
+	sess.mu.RUnlock()
+
+	if dest == nil {
+		return ""
+	}
+	return dest.Base64()
+}
+
 // Session returns the underlying go-i2cp session.
 // This allows direct access for advanced operations.
 func (sess *I2CPSession) Session() *go_i2cp.Session {
@@ -314,6 +336,10 @@ func (sess *I2CPSession) onMessage(session *go_i2cp.Session, srcDest *go_i2cp.De
 
 // onStatus handles session status updates from the I2CP session.
 // Matches go-i2cp SessionCallbacks.OnStatus signature.
+//
+// Per SAMv3.md: "the router builds tunnels before responding with SESSION STATUS"
+// We use I2CP_SESSION_STATUS_UPDATED to detect when tunnels are ready.
+// ISSUE-003: Signal tunnel readiness for blocking SESSION STATUS response.
 func (sess *I2CPSession) onStatus(session *go_i2cp.Session, status go_i2cp.SessionStatus) {
 	sess.mu.RLock()
 	callbacks := sess.callbacks
@@ -323,6 +349,51 @@ func (sess *I2CPSession) onStatus(session *go_i2cp.Session, status go_i2cp.Sessi
 	// I2CP_SESSION_STATUS_CREATED means session created successfully
 	if status == go_i2cp.I2CP_SESSION_STATUS_CREATED && callbacks != nil && callbacks.OnCreated != nil {
 		callbacks.OnCreated(dest)
+	}
+
+	// I2CP_SESSION_STATUS_UPDATED indicates session configuration updated,
+	// which typically happens when tunnels are built.
+	// Also signal on CREATED since some routers may not send UPDATED.
+	// Per I2P implementation: tunnel build status is conveyed via SessionStatus.
+	if status == go_i2cp.I2CP_SESSION_STATUS_CREATED || status == go_i2cp.I2CP_SESSION_STATUS_UPDATED {
+		sess.signalTunnelReady()
+	}
+}
+
+// signalTunnelReady signals that tunnels are ready.
+// Safe to call multiple times - only signals once.
+// Safe to call even if tunnelReady channel is nil (e.g., in tests).
+func (sess *I2CPSession) signalTunnelReady() {
+	if sess.tunnelReady == nil {
+		return // Channel not initialized, nothing to signal
+	}
+	sess.tunnelReadyOnce.Do(func() {
+		close(sess.tunnelReady)
+	})
+}
+
+// WaitForTunnels blocks until tunnels are built or context is cancelled.
+// Returns nil when tunnels are ready, or context error on timeout/cancellation.
+//
+// Per SAMv3.md: "the router builds tunnels before responding with SESSION STATUS.
+// This could take several seconds."
+// ISSUE-003: Use this to block SESSION STATUS response until tunnels are ready.
+func (sess *I2CPSession) WaitForTunnels(ctx context.Context) error {
+	select {
+	case <-sess.tunnelReady:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// IsTunnelReady returns true if tunnels are built and ready.
+func (sess *I2CPSession) IsTunnelReady() bool {
+	select {
+	case <-sess.tunnelReady:
+		return true
+	default:
+		return false
 	}
 }
 

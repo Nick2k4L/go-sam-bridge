@@ -73,6 +73,16 @@ type SessionConfig struct {
 	// 0 means disabled.
 	CloseIdleTime int
 
+	// SamUDPHost is the hostname for UDP datagram binding (sam.udp.host option).
+	// Per SAMv3.md: Java I2P specific option for datagram sessions.
+	// Default is empty (use system default).
+	SamUDPHost string
+
+	// SamUDPPort is the port for UDP datagram binding (sam.udp.port option).
+	// Per SAMv3.md: Java I2P specific option for datagram sessions.
+	// Default is 0 (use default 7655).
+	SamUDPPort int
+
 	// OfflineSignature contains offline signature data if provided.
 	// Allows transient keys while keeping long-term identity offline.
 	OfflineSignature *OfflineSignature

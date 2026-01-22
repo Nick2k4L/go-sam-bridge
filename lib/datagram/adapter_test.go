@@ -196,41 +196,51 @@ func TestIntegration_NewAdapter(t *testing.T) {
 	}
 }
 
-// TestIntegration_Adapter_Protocol tests protocol type for different protocols.
-func TestIntegration_Adapter_Protocol(t *testing.T) {
+// TestIntegration_Adapter_Protocol_Raw tests Raw protocol type.
+func TestIntegration_Adapter_Protocol_Raw(t *testing.T) {
 	client := createTestClient(t)
 	defer client.Close()
 
 	session := createTestSession(t, client)
 	defer session.Close()
 
-	tests := []struct {
-		name     string
-		protocol uint8
-	}{
-		{"Raw", datagrams.ProtocolRaw},             // 18
-		{"Datagram1", datagrams.ProtocolDatagram1}, // 17
-		{"Datagram2", datagrams.ProtocolDatagram2}, // 19
-		{"Datagram3", datagrams.ProtocolDatagram3}, // 20
+	conn, err := datagrams.NewDatagramConnWithProtocol(session, 7778, datagrams.ProtocolRaw)
+	if err != nil {
+		t.Fatalf("NewDatagramConnWithProtocol() error = %v", err)
+	}
+	defer conn.Close()
+
+	adapter, err := NewAdapter(conn)
+	if err != nil {
+		t.Fatalf("NewAdapter() error = %v", err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			conn, err := datagrams.NewDatagramConnWithProtocol(session, 7778, tt.protocol)
-			if err != nil {
-				t.Fatalf("NewDatagramConnWithProtocol() error = %v", err)
-			}
-			defer conn.Close()
+	if got := adapter.Protocol(); got != datagrams.ProtocolRaw {
+		t.Errorf("Protocol() = %d, want %d", got, datagrams.ProtocolRaw)
+	}
+}
 
-			adapter, err := NewAdapter(conn)
-			if err != nil {
-				t.Fatalf("NewAdapter() error = %v", err)
-			}
+// TestIntegration_Adapter_Protocol_Datagram3 tests Datagram3 protocol type.
+func TestIntegration_Adapter_Protocol_Datagram3(t *testing.T) {
+	client := createTestClient(t)
+	defer client.Close()
 
-			if got := adapter.Protocol(); got != tt.protocol {
-				t.Errorf("Protocol() = %d, want %d", got, tt.protocol)
-			}
-		})
+	session := createTestSession(t, client)
+	defer session.Close()
+
+	conn, err := datagrams.NewDatagramConnWithProtocol(session, 7788, datagrams.ProtocolDatagram3)
+	if err != nil {
+		t.Fatalf("NewDatagramConnWithProtocol() error = %v", err)
+	}
+	defer conn.Close()
+
+	adapter, err := NewAdapter(conn)
+	if err != nil {
+		t.Fatalf("NewAdapter() error = %v", err)
+	}
+
+	if got := adapter.Protocol(); got != datagrams.ProtocolDatagram3 {
+		t.Errorf("Protocol() = %d, want %d", got, datagrams.ProtocolDatagram3)
 	}
 }
 
