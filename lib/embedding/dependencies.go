@@ -1,0 +1,52 @@
+package embedding
+
+import (
+	"github.com/go-i2p/go-sam-bridge/lib/destination"
+	"github.com/go-i2p/go-sam-bridge/lib/session"
+	"github.com/sirupsen/logrus"
+)
+
+// Dependencies bundles shared resources used by handlers.
+// This struct is passed to handler registrar functions to allow
+// access to common dependencies without tight coupling.
+type Dependencies struct {
+	// Registry manages all active sessions.
+	Registry session.Registry
+
+	// I2CPProvider creates I2CP sessions for SAM sessions.
+	I2CPProvider session.I2CPSessionProvider
+
+	// DestManager handles I2P destination creation and management.
+	DestManager destination.Manager
+
+	// Logger is the structured logger for all components.
+	Logger *logrus.Logger
+}
+
+// newDependencies creates a Dependencies struct from the configuration.
+// It initializes any nil dependencies with their default implementations.
+func newDependencies(cfg *Config) *Dependencies {
+	deps := &Dependencies{
+		Registry:     cfg.Registry,
+		I2CPProvider: cfg.I2CPProvider,
+		DestManager:  destination.NewManager(),
+		Logger:       cfg.Logger,
+	}
+
+	// Create default registry if not provided
+	if deps.Registry == nil {
+		deps.Registry = session.NewRegistry()
+	}
+
+	// Create default logger if not provided
+	if deps.Logger == nil {
+		deps.Logger = logrus.New()
+		if cfg.Debug {
+			deps.Logger.SetLevel(logrus.DebugLevel)
+		} else {
+			deps.Logger.SetLevel(logrus.InfoLevel)
+		}
+	}
+
+	return deps
+}

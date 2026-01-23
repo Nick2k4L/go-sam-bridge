@@ -28,8 +28,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/go-i2p/go-sam-bridge/lib/bridge"
-	"github.com/go-i2p/go-sam-bridge/lib/destination"
+	"github.com/go-i2p/go-sam-bridge/lib/embedding"
 	"github.com/go-i2p/go-sam-bridge/lib/handler"
 	"github.com/go-i2p/go-sam-bridge/lib/i2cp"
 	"github.com/go-i2p/go-sam-bridge/lib/session"
@@ -47,64 +46,6 @@ var (
 	GitCommit = "unknown"
 )
 
-// i2cpProviderAdapter wraps i2cp.Client to implement session.I2CPSessionProvider.
-// This adapter bridges the i2cp package types to the session package interface,
-// avoiding circular import issues.
-type i2cpProviderAdapter struct {
-	client *i2cp.Client
-}
-
-// CreateSessionForSAM creates an I2CP session for a SAM session.
-// Implements session.I2CPSessionProvider.
-func (a *i2cpProviderAdapter) CreateSessionForSAM(ctx context.Context, samSessionID string, config *session.SessionConfig) (session.I2CPSessionHandle, error) {
-	// Convert session.SessionConfig to i2cp.SessionConfigFromSession
-	i2cpConfig := &i2cp.SessionConfigFromSession{
-		SignatureType:          config.SignatureType,
-		EncryptionTypes:        config.EncryptionTypes,
-		InboundQuantity:        config.InboundQuantity,
-		OutboundQuantity:       config.OutboundQuantity,
-		InboundLength:          config.InboundLength,
-		OutboundLength:         config.OutboundLength,
-		InboundBackupQuantity:  config.InboundBackupQuantity,
-		OutboundBackupQuantity: config.OutboundBackupQuantity,
-		FastReceive:            config.FastReceive,
-		ReduceIdleTime:         config.ReduceIdleTime,
-		CloseIdleTime:          config.CloseIdleTime,
-	}
-
-	return a.client.CreateSessionForSAM(ctx, samSessionID, i2cpConfig)
-}
-
-// IsConnected returns true if connected to the I2P router.
-// Implements session.I2CPSessionProvider.
-func (a *i2cpProviderAdapter) IsConnected() bool {
-	return a.client.IsConnected()
-}
-
-// Compile-time check that i2cpProviderAdapter implements session.I2CPSessionProvider.
-var _ session.I2CPSessionProvider = (*i2cpProviderAdapter)(nil)
-
-// Config holds the bridge server configuration.
-type Config struct {
-	// ListenAddr is the SAM TCP listen address (default ":7656").
-	ListenAddr string
-
-	// I2CPAddr is the I2CP router address (default "127.0.0.1:7654").
-	I2CPAddr string
-
-	// UDPAddr is the UDP datagram port (default ":7655").
-	UDPAddr string
-
-	// Debug enables debug logging.
-	Debug bool
-
-	// Username for I2CP authentication (optional).
-	Username string
-
-	// Password for I2CP authentication (optional).
-	Password string
-}
-
 func main() {
 	cfg := parseFlags()
 
@@ -113,9 +54,7 @@ func main() {
 	log.SetOutput(os.Stdout)
 	if cfg.Debug {
 		log.SetLevel(logrus.DebugLevel)
-		log.SetFormatter(&logrus.TextFormatter{
-			FullTimestamp: true,
-		})
+		log.SetFormatter(&logrus.TextFormatter{FullTimestamp: true})
 	} else {
 		log.SetLevel(logrus.InfoLevel)
 	}
@@ -126,25 +65,9 @@ func main() {
 		"commit":    GitCommit,
 	}).Info("Starting SAM bridge server")
 
-	// Create session registry
-	registry := session.NewRegistry()
-
-	// Create I2CP client configuration
-	i2cpConfig := &i2cp.ClientConfig{
-		RouterAddr: cfg.I2CPAddr,
-		Username:   cfg.Username,
-		Password:   cfg.Password,
-	}
-
-	// Create I2CP client
-	i2cpClient := i2cp.NewClient(i2cpConfig)
-
-	// Connect to I2P router
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	log.WithField("addr", cfg.I2CPAddr).Info("Connecting to I2P router")
-	if err := i2cpClient.Connect(ctx); err != nil {
+	// Connect to I2P router for I2CP integration
+	i2cpClient, err := connectI2CP(cfg, log)
+	if err != nil {
 		log.WithError(err).Error("Failed to connect to I2P router")
 		log.Info("Make sure I2P is running and SAM interface is enabled")
 		os.Exit(1)
@@ -153,71 +76,53 @@ func main() {
 
 	log.WithField("version", i2cpClient.RouterVersion()).Info("Connected to I2P router")
 
-	// Parse UDP datagram port from address string
-	datagramPort := bridge.DefaultDatagramPort
-	if cfg.UDPAddr != "" {
-		_, portStr, err := net.SplitHostPort(cfg.UDPAddr)
-		if err != nil {
-			// Try parsing as just a port number
-			portStr = cfg.UDPAddr
-		}
-		if parsedPort, err := strconv.Atoi(portStr); err == nil {
-			datagramPort = parsedPort
-		}
-	}
+	// Create I2CP provider adapter
+	i2cpProvider := newI2CPProviderAdapter(i2cpClient)
 
-	// Create bridge server configuration
-	bridgeConfig := &bridge.Config{
-		ListenAddr:   cfg.ListenAddr,
-		I2CPAddr:     cfg.I2CPAddr,
-		DatagramPort: datagramPort,
-	}
+	// Parse datagram port
+	datagramPort := parseDatagramPort(cfg.UDPAddr)
 
-	// Create bridge server
-	server, err := bridge.NewServer(bridgeConfig, registry)
+	// Create bridge with embedding API
+	bridge, err := embedding.New(
+		embedding.WithListenAddr(cfg.ListenAddr),
+		embedding.WithI2CPAddr(cfg.I2CPAddr),
+		embedding.WithDatagramPort(datagramPort),
+		embedding.WithI2CPProvider(i2cpProvider),
+		embedding.WithLogger(log),
+		embedding.WithDebug(cfg.Debug),
+		embedding.WithHandlerRegistrar(createHandlerRegistrar(i2cpClient)),
+	)
 	if err != nil {
-		log.WithError(err).Error("Failed to create bridge server")
+		log.WithError(err).Error("Failed to create bridge")
 		os.Exit(1)
 	}
 
-	// Register all SAM command handlers with I2CP integration
-	registerHandlers(server, cfg, i2cpClient, log)
+	// Start bridge
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	// Set up signal handling for graceful shutdown
+	if err := bridge.Start(ctx); err != nil {
+		log.WithError(err).Error("Failed to start bridge")
+		os.Exit(1)
+	}
+
+	// Wait for shutdown signal
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	<-sigChan
 
-	// Start server in goroutine
-	errChan := make(chan error, 1)
-	go func() {
-		log.WithField("addr", cfg.ListenAddr).Info("SAM bridge listening")
-		if err := server.ListenAndServe(); err != nil {
-			errChan <- err
-		}
-	}()
+	log.Info("Received shutdown signal")
+	bridge.Stop(context.Background())
+}
 
-	// Wait for shutdown signal or error
-	select {
-	case sig := <-sigChan:
-		log.WithField("signal", sig.String()).Info("Received shutdown signal")
-	case err := <-errChan:
-		log.WithError(err).Error("Server error")
-	}
-
-	// Graceful shutdown
-	log.Info("Shutting down...")
-
-	// Stop accepting new connections
-	if err := server.Close(); err != nil {
-		log.WithError(err).Warn("Error stopping server")
-	}
-
-	// Close all sessions
-	if err := registry.Close(); err != nil {
-		log.WithError(err).Warn("Error closing sessions")
-	}
-
-	log.Info("SAM bridge stopped")
+// Config holds command-line configuration.
+type Config struct {
+	ListenAddr string
+	I2CPAddr   string
+	UDPAddr    string
+	Debug      bool
+	Username   string
+	Password   string
 }
 
 func parseFlags() *Config {
@@ -257,12 +162,12 @@ func parseFlags() *Config {
 		os.Exit(0)
 	}
 
-	// Override with environment variables if set
-	if envListen := os.Getenv("SAM_LISTEN"); envListen != "" {
-		cfg.ListenAddr = envListen
+	// Override with environment variables
+	if env := os.Getenv("SAM_LISTEN"); env != "" {
+		cfg.ListenAddr = env
 	}
-	if envI2CP := os.Getenv("I2CP_ADDR"); envI2CP != "" {
-		cfg.I2CPAddr = envI2CP
+	if env := os.Getenv("I2CP_ADDR"); env != "" {
+		cfg.I2CPAddr = env
 	}
 	if os.Getenv("SAM_DEBUG") != "" {
 		cfg.Debug = true
@@ -271,143 +176,147 @@ func parseFlags() *Config {
 	return cfg
 }
 
-// registerHandlers registers all SAM command handlers with the server.
-// This sets up handlers for HELLO, SESSION, STREAM, DATAGRAM, RAW,
-// NAMING, DEST, PING, QUIT, and AUTH commands per SAMv3.md.
-func registerHandlers(server *bridge.Server, cfg *Config, i2cpClient *i2cp.Client, log *logrus.Logger) {
-	router := server.Router()
-	authStore := server.AuthStore()
-
-	// Create shared dependencies
-	destManager := destination.NewManager()
-
-	// Register HELLO handler (must be first command per SAMv3.md)
-	helloConfig := handler.DefaultHelloConfig()
-	if authStore != nil && authStore.IsAuthEnabled() {
-		helloConfig.RequireAuth = true
-		helloConfig.AuthFunc = authStore.CheckPassword
-	}
-	helloHandler := handler.NewHelloHandler(helloConfig)
-	router.Register("HELLO VERSION", helloHandler)
-
-	log.Debug("Registered HELLO VERSION handler")
-
-	// Create STREAM handlers first so we can reference them in session callback
-	streamConnector := handler.NewStreamingConnector()
-	streamAcceptor := handler.NewStreamingAcceptor()
-	streamForwarder := handler.NewStreamingForwarder()
-
-	// Register SESSION handler with I2CP provider for tunnel waiting
-	// ISSUE-003: This enables SESSION CREATE to wait for tunnels before responding
-	sessionHandler := handler.NewSessionHandler(destManager)
-	i2cpProvider := &i2cpProviderAdapter{client: i2cpClient}
-	sessionHandler.SetI2CPProvider(i2cpProvider)
-
-	// Set session created callback to wire StreamManager per session
-	// Uses NewStreamManagerFromSession to reuse the existing I2CP session (BUG-001 resolved)
-	sessionHandler.SetSessionCreatedCallback(func(sess session.Session, i2cpHandle session.I2CPSessionHandle) {
-		// Only create StreamManager for STREAM sessions with I2CP integration
-		if sess.Style() != session.StyleStream || i2cpHandle == nil {
-			return
-		}
-
-		// Type assert to get the underlying I2CP session
-		i2cpSess, ok := i2cpHandle.(*i2cp.I2CPSession)
-		if !ok {
-			log.WithField("sessionID", sess.ID()).Warn("Cannot create StreamManager: invalid I2CP session type")
-			return
-		}
-
-		// Get the underlying go-i2cp session and client
-		underlyingSession := i2cpSess.Session()
-		underlyingClient := i2cpClient.I2CPClient()
-		if underlyingSession == nil || underlyingClient == nil {
-			log.WithField("sessionID", sess.ID()).Warn("Cannot create StreamManager: no underlying I2CP session/client")
-			return
-		}
-
-		// Create go-streaming StreamManager from existing session (no duplicate session)
-		streamManager, err := streaming.NewStreamManagerFromSession(underlyingClient, underlyingSession)
-		if err != nil {
-			log.WithField("sessionID", sess.ID()).WithError(err).Warn("Failed to create StreamManager from session")
-			return
-		}
-
-		// Wrap with adapter and register with stream handlers
-		adapter, err := samstreaming.NewAdapter(streamManager)
-		if err != nil {
-			log.WithField("sessionID", sess.ID()).WithError(err).Warn("Failed to create StreamManager adapter")
-			return
-		}
-
-		streamConnector.RegisterManager(sess.ID(), adapter)
-		streamAcceptor.RegisterManager(sess.ID(), adapter)
-		streamForwarder.RegisterManager(sess.ID(), adapter)
-
-		log.WithField("sessionID", sess.ID()).Debug("Registered StreamManager for session (reusing I2CP session)")
-	})
-
-	router.Register("SESSION CREATE", sessionHandler)
-	router.Register("SESSION ADD", sessionHandler)
-	router.Register("SESSION REMOVE", sessionHandler)
-
-	log.Debug("Registered SESSION handlers with I2CP provider and StreamManager callback")
-
-	// Register STREAM handlers
-	streamHandler := handler.NewStreamHandler(streamConnector, streamAcceptor, streamForwarder)
-	router.Register("STREAM CONNECT", streamHandler)
-	router.Register("STREAM ACCEPT", streamHandler)
-	router.Register("STREAM FORWARD", streamHandler)
-
-	log.Debug("Registered STREAM handlers")
-
-	// Register DATAGRAM handler
-	handler.RegisterDatagramHandler(router)
-	log.Debug("Registered DATAGRAM handler")
-
-	// Register RAW handler
-	rawHandler := handler.NewRawHandler()
-	router.Register("RAW SEND", rawHandler)
-
-	log.Debug("Registered RAW handler")
-
-	// Register NAMING handler with resolver and leaseset provider
-	// Note: Resolver requires an active session, so lookups will fail until a session is created
-	namingHandler := handler.NewNamingHandler(destManager)
-
-	// Create destination resolver using the I2CP client (uses first available session)
-	destResolver, err := i2cp.NewClientDestinationResolverAdapter(i2cpClient, 30*time.Second)
-	if err == nil {
-		namingHandler.SetDestinationResolver(destResolver)
-		log.Debug("Wired destination resolver to NAMING handler")
-	} else {
-		log.WithError(err).Warn("Failed to create destination resolver for NAMING handler")
+func connectI2CP(cfg *Config, log *logrus.Logger) (*i2cp.Client, error) {
+	i2cpConfig := &i2cp.ClientConfig{
+		RouterAddr: cfg.I2CPAddr,
+		Username:   cfg.Username,
+		Password:   cfg.Password,
 	}
 
-	router.Register("NAMING LOOKUP", namingHandler)
+	client := i2cp.NewClient(i2cpConfig)
+	ctx := context.Background()
 
-	log.Debug("Registered NAMING handler")
-
-	// Register DEST handler
-	destHandler := handler.NewDestHandler(destManager)
-	router.Register("DEST GENERATE", destHandler)
-
-	log.Debug("Registered DEST handler")
-
-	// Register PING handler
-	handler.RegisterPingHandler(router)
-	log.Debug("Registered PING handler")
-
-	// Register utility handlers (QUIT, HELP, etc.)
-	handler.RegisterUtilityHandlers(router)
-	handler.RegisterHelpHandler(router)
-	log.Debug("Registered utility handlers")
-
-	// Register AUTH handlers if authentication is enabled
-	if authStore != nil && authStore.IsAuthEnabled() {
-		handler.RegisterAuthHandlers(router, authStore)
-		log.Debug("Registered AUTH handlers")
+	log.WithField("addr", cfg.I2CPAddr).Info("Connecting to I2P router")
+	if err := client.Connect(ctx); err != nil {
+		return nil, err
 	}
 
-	log.WithField("count", router.Count()).Info("All SAM command handlers registered")
+	return client, nil
 }
+
+func parseDatagramPort(addr string) int {
+	if addr == "" {
+		return embedding.DefaultDatagramPort
+	}
+	_, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		portStr = addr
+	}
+	if port, err := strconv.Atoi(portStr); err == nil {
+		return port
+	}
+	return embedding.DefaultDatagramPort
+}
+
+// createHandlerRegistrar returns a custom handler registrar with I2CP integration.
+// This extends the default registrar with I2CP-specific session callbacks.
+func createHandlerRegistrar(i2cpClient *i2cp.Client) embedding.HandlerRegistrarFunc {
+	return func(router *handler.Router, deps *embedding.Dependencies) {
+		log := deps.Logger
+
+		// Use default handler registrar for base handlers
+		embedding.DefaultHandlerRegistrar()(router, deps)
+
+		// Get the SESSION handler to add I2CP callback
+		// The default registrar already created it, we need to extend it
+		// For now, we re-register with the extended callback
+		streamConnector := handler.NewStreamingConnector()
+		streamAcceptor := handler.NewStreamingAcceptor()
+		streamForwarder := handler.NewStreamingForwarder()
+
+		sessionHandler := handler.NewSessionHandler(deps.DestManager)
+		sessionHandler.SetI2CPProvider(deps.I2CPProvider)
+
+		// Set session created callback for StreamManager wiring
+		sessionHandler.SetSessionCreatedCallback(func(sess session.Session, i2cpHandle session.I2CPSessionHandle) {
+			if sess.Style() != session.StyleStream || i2cpHandle == nil {
+				return
+			}
+
+			i2cpSess, ok := i2cpHandle.(*i2cp.I2CPSession)
+			if !ok {
+				log.WithField("sessionID", sess.ID()).Warn("Cannot create StreamManager: invalid I2CP session type")
+				return
+			}
+
+			underlyingSession := i2cpSess.Session()
+			underlyingClient := i2cpClient.I2CPClient()
+			if underlyingSession == nil || underlyingClient == nil {
+				log.WithField("sessionID", sess.ID()).Warn("Cannot create StreamManager: no underlying I2CP session/client")
+				return
+			}
+
+			streamManager, err := streaming.NewStreamManagerFromSession(underlyingClient, underlyingSession)
+			if err != nil {
+				log.WithField("sessionID", sess.ID()).WithError(err).Warn("Failed to create StreamManager from session")
+				return
+			}
+
+			adapter, err := samstreaming.NewAdapter(streamManager)
+			if err != nil {
+				log.WithField("sessionID", sess.ID()).WithError(err).Warn("Failed to create StreamManager adapter")
+				return
+			}
+
+			streamConnector.RegisterManager(sess.ID(), adapter)
+			streamAcceptor.RegisterManager(sess.ID(), adapter)
+			streamForwarder.RegisterManager(sess.ID(), adapter)
+
+			log.WithField("sessionID", sess.ID()).Debug("Registered StreamManager for session")
+		})
+
+		// Re-register SESSION handlers with extended callback
+		router.Register("SESSION CREATE", sessionHandler)
+		router.Register("SESSION ADD", sessionHandler)
+		router.Register("SESSION REMOVE", sessionHandler)
+
+		// Re-register STREAM handlers with new connectors
+		streamHandler := handler.NewStreamHandler(streamConnector, streamAcceptor, streamForwarder)
+		router.Register("STREAM CONNECT", streamHandler)
+		router.Register("STREAM ACCEPT", streamHandler)
+		router.Register("STREAM FORWARD", streamHandler)
+
+		// Wire destination resolver for NAMING handler
+		destResolver, err := i2cp.NewClientDestinationResolverAdapter(i2cpClient, 30*time.Second)
+		if err == nil {
+			namingHandler := handler.NewNamingHandler(deps.DestManager)
+			namingHandler.SetDestinationResolver(destResolver)
+			router.Register("NAMING LOOKUP", namingHandler)
+			log.Debug("Wired destination resolver to NAMING handler")
+		}
+
+		log.Debug("Extended handlers with I2CP integration")
+	}
+}
+
+// i2cpProviderAdapter wraps i2cp.Client to implement session.I2CPSessionProvider.
+type i2cpProviderAdapter struct {
+	client *i2cp.Client
+}
+
+func newI2CPProviderAdapter(client *i2cp.Client) *i2cpProviderAdapter {
+	return &i2cpProviderAdapter{client: client}
+}
+
+func (a *i2cpProviderAdapter) CreateSessionForSAM(ctx context.Context, samSessionID string, config *session.SessionConfig) (session.I2CPSessionHandle, error) {
+	i2cpConfig := &i2cp.SessionConfigFromSession{
+		SignatureType:          config.SignatureType,
+		EncryptionTypes:        config.EncryptionTypes,
+		InboundQuantity:        config.InboundQuantity,
+		OutboundQuantity:       config.OutboundQuantity,
+		InboundLength:          config.InboundLength,
+		OutboundLength:         config.OutboundLength,
+		InboundBackupQuantity:  config.InboundBackupQuantity,
+		OutboundBackupQuantity: config.OutboundBackupQuantity,
+		FastReceive:            config.FastReceive,
+		ReduceIdleTime:         config.ReduceIdleTime,
+		CloseIdleTime:          config.CloseIdleTime,
+	}
+	return a.client.CreateSessionForSAM(ctx, samSessionID, i2cpConfig)
+}
+
+func (a *i2cpProviderAdapter) IsConnected() bool {
+	return a.client.IsConnected()
+}
+
+var _ session.I2CPSessionProvider = (*i2cpProviderAdapter)(nil)
