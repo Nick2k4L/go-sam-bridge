@@ -86,6 +86,7 @@ var samCommands = []string{
 	"PONG",
 	"AUTH ADD",
 	"AUTH REMOVE",
+	"AUTH LIST",
 	"AUTH ENABLE",
 	"AUTH DISABLE",
 	"QUIT",

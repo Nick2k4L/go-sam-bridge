@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/go-i2p/go-sam-bridge/lib/datagram"
 	"github.com/go-i2p/go-sam-bridge/lib/handler"
 	"github.com/go-i2p/go-sam-bridge/lib/protocol"
 	"github.com/go-i2p/go-sam-bridge/lib/session"
@@ -25,6 +27,10 @@ type Server struct {
 	registry  session.Registry
 	parser    *protocol.Parser
 	authStore *AuthStore
+
+	// udpListener handles UDP datagrams on port 7655 per SAM specification.
+	// May be nil if DatagramPort is 0 (disabled).
+	udpListener *datagram.UDPListener
 
 	mu          sync.Mutex
 	connections map[*Connection]struct{}
@@ -78,8 +84,16 @@ func (s *Server) AuthStore() *AuthStore {
 // ListenAndServe starts listening on the configured address and serves clients.
 // This method blocks until the server is closed.
 func (s *Server) ListenAndServe() error {
+	// Start UDP datagram listener if enabled
+	if s.config.DatagramPort > 0 {
+		if err := s.startUDPListener(); err != nil {
+			return fmt.Errorf("failed to start UDP listener: %w", err)
+		}
+	}
+
 	listener, err := net.Listen("tcp", s.config.ListenAddr)
 	if err != nil {
+		s.stopUDPListener() // Clean up UDP if TCP fails
 		return err
 	}
 
@@ -89,6 +103,22 @@ func (s *Server) ListenAndServe() error {
 	}
 
 	return s.Serve(listener)
+}
+
+// startUDPListener initializes and starts the UDP datagram listener.
+// Per SAM specification, UDP port 7655 accepts datagrams for sending.
+func (s *Server) startUDPListener() error {
+	addr := fmt.Sprintf(":%d", s.config.DatagramPort)
+	s.udpListener = datagram.NewUDPListener(addr, s.registry)
+	return s.udpListener.Start()
+}
+
+// stopUDPListener stops the UDP listener if running.
+func (s *Server) stopUDPListener() {
+	if s.udpListener != nil {
+		s.udpListener.Close()
+		s.udpListener = nil
+	}
 }
 
 // Serve accepts connections on the listener and handles them.
@@ -461,15 +491,16 @@ func (s *Server) sendPongTimeoutError(c *Connection) {
 // If the response has additional lines (e.g., STREAM ACCEPT destination info),
 // they are written after the main response line.
 func (s *Server) sendResponse(c *Connection, response *protocol.Response) error {
-	line := response.String()
-	_, err := c.WriteLine(line)
+	// response.String() includes trailing newline, use Write not WriteLine
+	_, err := c.Write([]byte(response.String()))
 	if err != nil {
 		return err
 	}
 
 	// Send additional lines if present (e.g., destination info for STREAM ACCEPT)
+	// Each additional line needs a newline terminator
 	for _, additionalLine := range response.AdditionalLines {
-		_, err = c.WriteLine(additionalLine + "\n")
+		_, err = c.WriteLine(additionalLine)
 		if err != nil {
 			return err
 		}
@@ -485,6 +516,9 @@ func (s *Server) Close() error {
 	}
 
 	close(s.done)
+
+	// Stop UDP listener
+	s.stopUDPListener()
 
 	s.mu.Lock()
 	listener := s.listener
