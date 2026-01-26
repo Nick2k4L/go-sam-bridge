@@ -5,6 +5,7 @@ package handler
 
 import (
 	"context"
+	"io"
 	"net"
 
 	"github.com/go-i2p/go-sam-bridge/lib/protocol"
@@ -34,6 +35,12 @@ func (f HandlerFunc) Handle(ctx *Context, cmd *protocol.Command) (*protocol.Resp
 type Context struct {
 	// Conn is the client connection.
 	Conn net.Conn
+
+	// StreamConn is the I2P stream connection after STREAM CONNECT/ACCEPT.
+	// Per SAMv3.md: "all remaining data passing through the current socket
+	// is forwarded from and to the connected I2P destination peer."
+	// Nil until STREAM CONNECT or STREAM ACCEPT succeeds.
+	StreamConn net.Conn
 
 	// Session is the bound session, if any.
 	// Nil until SESSION CREATE succeeds on this connection.
@@ -94,4 +101,66 @@ func (c *Context) RemoteAddr() string {
 		return ""
 	}
 	return addr.String()
+}
+
+// SetStreamConn sets the I2P stream connection for data forwarding.
+// Called after successful STREAM CONNECT or STREAM ACCEPT.
+func (c *Context) SetStreamConn(conn net.Conn) {
+	c.StreamConn = conn
+}
+
+// HasStreamConn returns true if a stream connection is set.
+// When true, the bridge should start bidirectional data forwarding.
+func (c *Context) HasStreamConn() bool {
+	return c.StreamConn != nil
+}
+
+// StartForwarding starts bidirectional data forwarding between the control
+// socket and the I2P stream connection. Per SAMv3.md: "all remaining data
+// passing through the current socket is forwarded from and to the connected
+// I2P destination peer."
+//
+// This method is called after STREAM CONNECT or STREAM ACCEPT succeeds.
+// It spawns a background goroutine to perform the forwarding.
+func (c *Context) StartForwarding() {
+	if c.StreamConn == nil || c.Conn == nil {
+		return
+	}
+	go c.ForwardData(c.StreamConn)
+}
+
+// ForwardData performs bidirectional data forwarding between the control
+// socket (Conn) and the I2P stream connection (i2pConn).
+// This function runs until either connection is closed or encounters an error.
+func (c *Context) ForwardData(i2pConn net.Conn) error {
+	if c.Conn == nil {
+		return nil
+	}
+
+	// Use a WaitGroup to wait for both copy directions
+	done := make(chan error, 2)
+
+	// Forward: control socket -> I2P stream
+	go func() {
+		_, err := io.Copy(i2pConn, c.Conn)
+		done <- err
+	}()
+
+	// Forward: I2P stream -> control socket
+	go func() {
+		_, err := io.Copy(c.Conn, i2pConn)
+		done <- err
+	}()
+
+	// Wait for either direction to complete (connection closed)
+	err := <-done
+
+	// Close both connections to unblock the other goroutine
+	c.Conn.Close()
+	i2pConn.Close()
+
+	// Wait for the second goroutine
+	<-done
+
+	return err
 }

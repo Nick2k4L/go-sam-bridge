@@ -103,7 +103,17 @@ func (h *StreamHandler) handleConnect(ctx *Context, cmd *protocol.Command) (*pro
 		return resp, nil
 	}
 
-	return h.executeConnect(params)
+	response, err := h.executeConnect(ctx, params)
+	if err != nil {
+		return response, err
+	}
+
+	// Per SAMv3.md: "all remaining data passing through the current socket
+	// is forwarded from and to the connected I2P destination peer."
+	// Start bidirectional forwarding in background goroutine.
+	ctx.StartForwarding()
+
+	return response, nil
 }
 
 // connectParams holds parsed parameters for STREAM CONNECT.
@@ -156,7 +166,7 @@ func (h *StreamHandler) parseConnectParams(ctx *Context, cmd *protocol.Command) 
 }
 
 // executeConnect performs the actual connection.
-func (h *StreamHandler) executeConnect(params *connectParams) (*protocol.Response, error) {
+func (h *StreamHandler) executeConnect(ctx *Context, params *connectParams) (*protocol.Response, error) {
 	if h.Connector == nil {
 		return streamError("connector not available"), nil
 	}
@@ -169,12 +179,15 @@ func (h *StreamHandler) executeConnect(params *connectParams) (*protocol.Respons
 		return h.connectError(err), nil
 	}
 
+	// Store the I2P stream connection in context for data forwarding.
+	// Per SAMv3.md: "all remaining data passing through the current socket
+	// is forwarded from and to the connected I2P destination peer."
+	ctx.SetStreamConn(conn)
+
 	if params.silent {
-		_ = conn
 		return nil, nil
 	}
 
-	_ = conn
 	return streamOK(), nil
 }
 
@@ -205,7 +218,19 @@ func (h *StreamHandler) handleAccept(ctx *Context, cmd *protocol.Command) (*prot
 		defer cleanup()
 	}
 
-	return h.executeAccept(sess, silent)
+	response, err := h.executeAccept(ctx, sess, silent)
+	if err != nil {
+		return response, err
+	}
+
+	// Per SAMv3.md: after accept, "all remaining data passing through the
+	// current socket is forwarded from and to the connected I2P destination peer."
+	// Start bidirectional forwarding in background goroutine.
+	if ctx.StreamConn != nil {
+		ctx.StartForwarding()
+	}
+
+	return response, nil
 }
 
 // validateAcceptSession validates the session for ACCEPT operation.
@@ -246,7 +271,8 @@ func (h *StreamHandler) trackPendingAccept(ctx *Context, sess session.Session) (
 }
 
 // executeAccept performs the actual accept operation.
-func (h *StreamHandler) executeAccept(sess session.Session, silent bool) (*protocol.Response, error) {
+// Per SAMv3.md: After accept, the socket becomes a data pipe to the I2P peer.
+func (h *StreamHandler) executeAccept(ctx *Context, sess session.Session, silent bool) (*protocol.Response, error) {
 	if h.Acceptor == nil {
 		return streamError("acceptor not available"), nil
 	}
@@ -259,17 +285,18 @@ func (h *StreamHandler) executeAccept(sess session.Session, silent bool) (*proto
 		return streamError(err.Error()), nil
 	}
 
+	// Store the I2P stream connection for forwarding
+	ctx.StreamConn = conn
+
 	if silent {
-		_ = conn
 		return nil, nil
 	}
 
-	return h.buildAcceptResponse(conn, info)
+	return h.buildAcceptResponse(info)
 }
 
 // buildAcceptResponse creates the accept success response.
-func (h *StreamHandler) buildAcceptResponse(conn net.Conn, info *AcceptInfo) (*protocol.Response, error) {
-	_ = conn
+func (h *StreamHandler) buildAcceptResponse(info *AcceptInfo) (*protocol.Response, error) {
 	resp := streamOK()
 	if info != nil {
 		destLine := fmt.Sprintf("%s FROM_PORT=%d TO_PORT=%d", info.Destination, info.FromPort, info.ToPort)
