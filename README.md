@@ -28,7 +28,7 @@ This bridge is built on pure Go I2P libraries:
 - **[go-streaming](https://github.com/go-i2p/go-streaming)** - Reliable ordered streams over I2P
 - **[go-datagrams](https://github.com/go-i2p/go-datagrams)** - Datagram support (repliable, raw, and new formats)
 
-Unlike other SAM implementations that require a separate I2P router, `go-sam-bridge` directly implements I2P networking in Go.
+Unlike other SAM implementations that require a separate I2P router, `go-sam-bridge` directly embeds I2P routing in Go. If no router is available on the host, an embedded I2P router will be used instead.
 
 ## Status
 
@@ -48,8 +48,6 @@ Unlike other SAM implementations that require a separate I2P router, `go-sam-bri
 - PING/PONG keepalive
 - AUTH commands for authentication management
 - Utility commands (QUIT, STOP, EXIT, HELP)
-
-See [AUDIT.md](AUDIT.md) for the functional audit report.
 
 ## Quick Start
 
