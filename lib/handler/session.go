@@ -233,6 +233,16 @@ func (h *SessionHandler) registerAndFinalizeSession(ctx *Context, newSession ses
 	// Bind session to connection context
 	ctx.BindSession(newSession)
 
+	// Start datagram/raw receivers for non-forwarding sessions
+	// Per SAMv3.md: When no PORT is specified, incoming datagrams are delivered
+	// on the control socket as DATAGRAM RECEIVED or RAW RECEIVED messages.
+	switch newSession.Style() {
+	case session.StyleDatagram, session.StyleDatagram2, session.StyleDatagram3:
+		ctx.StartDatagramReceiver()
+	case session.StyleRaw:
+		ctx.StartRawReceiver()
+	}
+
 	// Invoke session created callback
 	if h.onSessionCreated != nil {
 		h.onSessionCreated(newSession, i2cpHandle)

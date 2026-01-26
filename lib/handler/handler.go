@@ -164,3 +164,89 @@ func (c *Context) ForwardData(i2pConn net.Conn) error {
 
 	return err
 }
+
+// StartDatagramReceiver starts a goroutine that reads from the session's
+// Receive channel and writes DATAGRAM RECEIVED messages to the control socket.
+//
+// Per SAMv3.md: "When a datagram arrives, the bridge delivers it to the client via:
+// <- DATAGRAM RECEIVED DESTINATION=$dest SIZE=$numBytes FROM_PORT=nnn TO_PORT=nnn \n
+// [$numBytes of data]"
+//
+// This should be called after SESSION CREATE for DATAGRAM sessions when
+// not using UDP forwarding (no PORT option).
+func (c *Context) StartDatagramReceiver() {
+	dgSess, ok := c.Session.(session.DatagramSession)
+	if !ok {
+		return
+	}
+
+	// Check if forwarding is enabled (in which case, don't write to control socket)
+	if dgSess.ForwardingAddr() != nil {
+		return
+	}
+
+	go c.receiveDatagrams(dgSess.Receive())
+}
+
+// receiveDatagrams reads datagrams from the channel and writes them to the control socket.
+func (c *Context) receiveDatagrams(ch <-chan session.ReceivedDatagram) {
+	for dg := range ch {
+		// Format the DATAGRAM RECEIVED header
+		header := FormatDatagramReceived(dg, c.Version)
+
+		// Write header line followed by newline
+		_, err := c.Conn.Write([]byte(header + "\n"))
+		if err != nil {
+			// Connection closed, stop receiving
+			return
+		}
+
+		// Write the data payload
+		_, err = c.Conn.Write(dg.Data)
+		if err != nil {
+			return
+		}
+	}
+}
+
+// StartRawReceiver starts a goroutine that reads from the session's
+// Receive channel and writes RAW RECEIVED messages to the control socket.
+//
+// Per SAMv3.md: "When a raw datagram arrives, the bridge delivers it to the client via:
+// <- RAW RECEIVED SIZE=$numBytes FROM_PORT=nnn TO_PORT=nnn PROTOCOL=nnn \n
+// [$numBytes of data]"
+//
+// This should be called after SESSION CREATE for RAW sessions when
+// not using UDP forwarding (no PORT option).
+func (c *Context) StartRawReceiver() {
+	rawSess, ok := c.Session.(session.RawSession)
+	if !ok {
+		return
+	}
+
+	// Note: Raw sessions may also use forwarding, but the interface doesn't
+	// expose ForwardingAddr() - TODO: Add when raw forwarding is complete
+
+	go c.receiveRawDatagrams(rawSess.Receive())
+}
+
+// receiveRawDatagrams reads raw datagrams from the channel and writes them to the control socket.
+func (c *Context) receiveRawDatagrams(ch <-chan session.ReceivedRawDatagram) {
+	for dg := range ch {
+		// Format the RAW RECEIVED header
+		header := FormatRawReceived(dg, c.Version)
+
+		// Write header line followed by newline
+		_, err := c.Conn.Write([]byte(header + "\n"))
+		if err != nil {
+			// Connection closed, stop receiving
+			return
+		}
+
+		// Write the data payload
+		_, err = c.Conn.Write(dg.Data)
+		if err != nil {
+			return
+		}
+	}
+}
