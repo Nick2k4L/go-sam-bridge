@@ -44,7 +44,7 @@ Unlike other SAM implementations that require a separate I2P router, `go-sam-bri
 - RAW anonymous datagram support
 - PRIMARY sessions with multiplexed subsessions
 - DEST GENERATE with Ed25519/ECIES-X25519 key generation
-- NAMING LOOKUP with B32/B33 address resolution
+- NAMING LOOKUP with B32/B33 address resolution(No hostnames yet)
 - PING/PONG keepalive
 - AUTH commands for authentication management
 - Utility commands (QUIT, STOP, EXIT, HELP)
@@ -118,6 +118,7 @@ See [LICENSE](LICENSE) file for details.
 
 ## Related Projects
 
+- [go-sam-go](https://github.com/eyedeekay/go-sam-go) - Modern SAM 3.3 client library
 - [gosam](https://github.com/eyedeekay/goSam) - SAM 3.2 client library
-- [sam3](https://github.com/eyedeekay/sam3) - SAM 3.3 client library
+- [sam3](https://github.com/eyedeekay/sam3) - Legacy SAM 3.3 client library
 - [i2p-rs](https://github.com/i2p/i2p-rs) - Rust SAM implementation
