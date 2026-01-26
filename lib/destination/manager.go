@@ -3,11 +3,11 @@ package destination
 
 import (
 	"errors"
-	"sync"
 
 	commondest "github.com/go-i2p/common/destination"
 	"github.com/go-i2p/common/keys_and_cert"
 	"github.com/go-i2p/go-i2p/lib/keys"
+	lru "github.com/hashicorp/golang-lru/v2"
 
 	"github.com/go-i2p/go-sam-bridge/lib/util"
 )
@@ -38,19 +38,42 @@ type Manager interface {
 	EncodePublic(d *commondest.Destination) (string, error)
 }
 
+// DefaultCacheSize is the default maximum number of destinations to cache.
+// This prevents unbounded memory growth in long-running servers.
+const DefaultCacheSize = 1000
+
 // ManagerImpl is the concrete implementation of Manager.
 // It uses go-i2p/keys for key generation and go-i2p/common for data structures.
+// The destination cache is bounded using an LRU eviction policy to prevent
+// unbounded memory growth in long-running servers.
 type ManagerImpl struct {
-	mu sync.RWMutex
+	// cache stores parsed destinations with LRU eviction policy.
+	// Maximum size is set at construction time via NewManagerWithCacheSize.
+	// The LRU cache is internally thread-safe, so no external mutex is needed.
+	cache *lru.Cache[string, *commondest.Destination]
 
-	// cache stores parsed destinations for performance.
-	cache map[string]*commondest.Destination
+	// cacheCapacity stores the maximum cache size set at construction.
+	cacheCapacity int
 }
 
-// NewManager creates a new destination manager.
+// NewManager creates a new destination manager with default cache size.
+// Uses DefaultCacheSize (1000) for the LRU cache.
 func NewManager() *ManagerImpl {
+	return NewManagerWithCacheSize(DefaultCacheSize)
+}
+
+// NewManagerWithCacheSize creates a new destination manager with a custom cache size.
+// The cache uses LRU eviction when the size limit is reached.
+// cacheSize must be > 0; if 0 or negative, DefaultCacheSize is used.
+func NewManagerWithCacheSize(cacheSize int) *ManagerImpl {
+	if cacheSize <= 0 {
+		cacheSize = DefaultCacheSize
+	}
+	// LRU cache creation should not fail with valid size
+	cache, _ := lru.New[string, *commondest.Destination](cacheSize)
 	return &ManagerImpl{
-		cache: make(map[string]*commondest.Destination),
+		cache:         cache,
+		cacheCapacity: cacheSize,
 	}
 }
 
@@ -272,18 +295,16 @@ func (m *ManagerImpl) getEncryptionKeySize(dest commondest.Destination) int {
 }
 
 // ParsePublic decodes a Base64 public destination string.
+// Results are cached using an LRU eviction policy to prevent unbounded growth.
 func (m *ManagerImpl) ParsePublic(destBase64 string) (*commondest.Destination, error) {
 	if destBase64 == "" {
 		return nil, ErrInvalidDestination
 	}
 
-	// Check cache first
-	m.mu.RLock()
-	if cached, ok := m.cache[destBase64]; ok {
-		m.mu.RUnlock()
+	// Check cache first (LRU cache is thread-safe)
+	if cached, ok := m.cache.Get(destBase64); ok {
 		return cached, nil
 	}
-	m.mu.RUnlock()
 
 	data, err := Base64Decode(destBase64)
 	if err != nil {
@@ -295,10 +316,8 @@ func (m *ManagerImpl) ParsePublic(destBase64 string) (*commondest.Destination, e
 		return nil, util.NewSessionError("", "parse destination", err)
 	}
 
-	// Cache the parsed destination
-	m.mu.Lock()
-	m.cache[destBase64] = &dest
-	m.mu.Unlock()
+	// Cache the parsed destination (LRU will evict oldest if at capacity)
+	m.cache.Add(destBase64, &dest)
 
 	return &dest, nil
 }
@@ -331,17 +350,20 @@ func (m *ManagerImpl) EncodePublic(d *commondest.Destination) (string, error) {
 }
 
 // ClearCache clears the destination cache.
+// This is useful for testing or when memory pressure is detected.
 func (m *ManagerImpl) ClearCache() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.cache = make(map[string]*commondest.Destination)
+	m.cache.Purge()
 }
 
 // CacheSize returns the number of cached destinations.
 func (m *ManagerImpl) CacheSize() int {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return len(m.cache)
+	return m.cache.Len()
+}
+
+// CacheCapacity returns the maximum cache size.
+// This is the limit set at construction time.
+func (m *ManagerImpl) CacheCapacity() int {
+	return m.cacheCapacity
 }
 
 // Verify Manager interface compliance

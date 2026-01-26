@@ -515,3 +515,53 @@ func TestSubsessionOptions_Defaults(t *testing.T) {
 		t.Error("HeaderEnabled default should be false")
 	}
 }
+
+// TestPrimarySessionImpl_Activate tests the Activate method which transitions
+// a PRIMARY session from Creating to Active status per SAM 3.2 specification.
+func TestPrimarySessionImpl_Activate(t *testing.T) {
+	tests := []struct {
+		name           string
+		initialStatus  Status
+		expectedStatus Status
+	}{
+		{
+			name:           "activate from Creating status",
+			initialStatus:  StatusCreating,
+			expectedStatus: StatusActive,
+		},
+		{
+			name:           "activate from Active status (idempotent)",
+			initialStatus:  StatusActive,
+			expectedStatus: StatusActive,
+		},
+		{
+			name:           "activate from Closing status",
+			initialStatus:  StatusClosing,
+			expectedStatus: StatusActive,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create primary session - starts in Creating status
+			primary := NewPrimarySession("test-primary", nil, nil, nil)
+			defer primary.Close()
+
+			// Set initial status for test
+			primary.SetStatus(tt.initialStatus)
+
+			// Verify initial status
+			if got := primary.Status(); got != tt.initialStatus {
+				t.Fatalf("initial Status() = %v, want %v", got, tt.initialStatus)
+			}
+
+			// Call Activate
+			primary.Activate()
+
+			// Verify status changed to Active
+			if got := primary.Status(); got != tt.expectedStatus {
+				t.Errorf("after Activate() Status() = %v, want %v", got, tt.expectedStatus)
+			}
+		})
+	}
+}

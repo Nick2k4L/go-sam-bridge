@@ -98,6 +98,82 @@ func NewStreamSession(
 	}
 }
 
+// NewStreamSessionBasic creates a new STREAM session without I2CP components.
+// This is used by the session handler when I2CP integration is not yet wired.
+// Call SetI2CPSession and SetStreamManager to add I2CP functionality later.
+//
+// The session is created in StatusCreating state. Call Activate() after
+// I2CP components are configured.
+//
+// Per SAM 3.0 specification, STREAM sessions support:
+//   - STREAM CONNECT for outbound connections
+//   - STREAM ACCEPT for inbound connections
+//   - STREAM FORWARD for forwarding to host:port
+func NewStreamSessionBasic(
+	id string,
+	dest *Destination,
+	conn net.Conn,
+	cfg *SessionConfig,
+) *StreamSessionImpl {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	return &StreamSessionImpl{
+		BaseSession: NewBaseSession(id, StyleStream, dest, conn, cfg),
+		activeConns: make(map[string]net.Conn),
+		forwardStop: make(chan struct{}),
+		ctx:         ctx,
+		cancel:      cancel,
+	}
+}
+
+// SetI2CPSession sets the I2CP session for stream operations.
+// This must be called before Connect/Accept/Forward operations.
+func (s *StreamSessionImpl) SetI2CPSession(i2cpSession *go_i2cp.Session) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.i2cpSession = i2cpSession
+}
+
+// SetStreamManager sets the stream manager for packet routing.
+// This must be called before Connect/Accept operations.
+func (s *StreamSessionImpl) SetStreamManager(manager *streaming.StreamManager) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.streamManager = manager
+}
+
+// SetForwardConfig stores the forwarding host and port for later use.
+// This is called during SESSION CREATE when PORT/HOST options are provided.
+// The actual forwarding is started when STREAM FORWARD is called.
+//
+// Per SAM 3.0 specification, FORWARD and ACCEPT are mutually exclusive.
+func (s *StreamSessionImpl) SetForwardConfig(host string, port int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if port <= 0 || port > 65535 {
+		return errors.New("invalid port number")
+	}
+
+	s.forwardHost = host
+	s.forwardPort = port
+	return nil
+}
+
+// ForwardConfig returns the configured forwarding host and port.
+// Returns empty string and 0 if no forwarding is configured.
+func (s *StreamSessionImpl) ForwardConfig() (host string, port int) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.forwardHost, s.forwardPort
+}
+
+// Activate transitions the session from Creating to Active status.
+// Call this after all I2CP components are configured.
+func (s *StreamSessionImpl) Activate() {
+	s.SetStatus(StatusActive)
+}
+
 // Connect establishes an outbound stream to the specified destination.
 // Implements SAM 3.0 STREAM CONNECT command.
 //

@@ -74,6 +74,12 @@ func NewPrimarySession(
 	}
 }
 
+// Activate transitions the primary session from Creating to Active status.
+// Call this after I2CP tunnels are built and the session is ready for subsessions.
+func (p *PrimarySessionImpl) Activate() {
+	p.SetStatus(StatusActive)
+}
+
 // AddSubsession creates a new subsession with the given style and options.
 // Implements SAM 3.3 SESSION ADD command.
 //

@@ -320,12 +320,13 @@ func (h *SessionHandler) parseExistingDest(privKeyBase64 string) (*session.Desti
 // based on the STYLE parameter.
 //
 // Per SAM specification:
-//   - STYLE=STREAM: Creates BaseSession (StreamSessionImpl when fully integrated)
+//   - STYLE=STREAM: Creates StreamSessionImpl for STREAM CONNECT/ACCEPT/FORWARD
 //   - STYLE=RAW: Creates RawSessionImpl with PROTOCOL/HEADER options
 //   - STYLE=DATAGRAM: Creates DatagramSessionImpl with PORT/HOST forwarding options
 //   - STYLE=DATAGRAM2: Creates Datagram2SessionImpl with replay protection
 //   - STYLE=DATAGRAM3: Creates Datagram3SessionImpl (unauthenticated)
-//   - STYLE=PRIMARY: Creates BaseSession (PrimarySessionImpl when implemented)
+//   - STYLE=PRIMARY: Creates PrimarySessionImpl for multiplexed subsessions
+//   - STYLE=MASTER: Alias for PRIMARY (pre-0.9.47 compatibility)
 func (h *SessionHandler) createSession(
 	id string,
 	style session.Style,
@@ -335,6 +336,8 @@ func (h *SessionHandler) createSession(
 	cmd *protocol.Command,
 ) (session.Session, error) {
 	switch style {
+	case session.StyleStream:
+		return h.createStreamSession(id, dest, conn, config, cmd)
 	case session.StyleRaw:
 		return h.createRawSession(id, dest, conn, config, cmd)
 	case session.StyleDatagram:
@@ -343,13 +346,71 @@ func (h *SessionHandler) createSession(
 		return h.createDatagram2Session(id, dest, conn, config, cmd)
 	case session.StyleDatagram3:
 		return h.createDatagram3Session(id, dest, conn, config, cmd)
+	case session.StylePrimary, session.StyleMaster:
+		return h.createPrimarySession(id, dest, conn, config, cmd)
 	default:
-		// For STREAM, PRIMARY - use BaseSession for now
-		// These will be upgraded to specific implementations as completed
-		baseSession := session.NewBaseSession(id, style, dest, conn, config)
-		baseSession.SetStatus(session.StatusActive)
-		return baseSession, nil
+		return nil, fmt.Errorf("unsupported session style: %s", style)
 	}
+}
+
+// createStreamSession creates a StreamSessionImpl for STYLE=STREAM.
+// Handles STREAM-specific options: FORWARD/HOST/PORT for forwarding mode.
+//
+// Per SAM 3.0 specification:
+//   - STREAM sessions support CONNECT, ACCEPT, and FORWARD commands
+//   - FORWARD is mutually exclusive with ACCEPT
+//   - PORT/HOST options are NOT valid at SESSION CREATE time
+//   - Forwarding is configured via STREAM FORWARD command later
+//   - The session is created without I2CP components; these can be wired
+//     later via the SessionCreatedCallback
+//
+// Per SAM 3.2 specification:
+//   - Multiple concurrent ACCEPTs are allowed
+func (h *SessionHandler) createStreamSession(
+	id string,
+	dest *session.Destination,
+	conn net.Conn,
+	config *session.SessionConfig,
+	cmd *protocol.Command,
+) (*session.StreamSessionImpl, error) {
+	// Create the stream session without I2CP (can be wired later via callback)
+	// Note: PORT/HOST are validated to be absent by validateStyleOptions()
+	// Forwarding configuration is set via STREAM FORWARD command, not SESSION CREATE
+	streamSession := session.NewStreamSessionBasic(id, dest, conn, config)
+
+	// Activate the session
+	streamSession.Activate()
+
+	return streamSession, nil
+}
+
+// createPrimarySession creates a PrimarySessionImpl for STYLE=PRIMARY or STYLE=MASTER.
+// PRIMARY sessions support multiplexed subsessions that share a single destination.
+//
+// Per SAM 3.3 specification:
+//   - PRIMARY sessions connect to the router and build tunnels
+//   - Once active, subsessions can be added via SESSION ADD
+//   - All subsessions share the same destination
+//   - Routing is based on LISTEN_PORT/LISTEN_PROTOCOL
+//   - PORT, HOST, FROM_PORT, TO_PORT, PROTOCOL, etc. are NOT valid at SESSION CREATE
+//     (these apply only to subsessions added via SESSION ADD)
+//
+// STYLE=MASTER is the pre-0.9.47 name for PRIMARY (for compatibility).
+func (h *SessionHandler) createPrimarySession(
+	id string,
+	dest *session.Destination,
+	conn net.Conn,
+	config *session.SessionConfig,
+	cmd *protocol.Command,
+) (*session.PrimarySessionImpl, error) {
+	// Create the primary session
+	// Note: PORT, HOST, FROM_PORT, etc. are validated to be absent by validateStyleOptions()
+	primarySession := session.NewPrimarySession(id, dest, conn, config)
+
+	// Activate the session
+	primarySession.Activate()
+
+	return primarySession, nil
 }
 
 // createRawSession creates a RawSessionImpl for STYLE=RAW.

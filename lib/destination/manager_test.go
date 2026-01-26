@@ -147,10 +147,95 @@ func TestManagerImpl_Cache(t *testing.T) {
 		t.Errorf("Initial CacheSize() = %d, want 0", m.CacheSize())
 	}
 
+	if m.CacheCapacity() != DefaultCacheSize {
+		t.Errorf("CacheCapacity() = %d, want %d", m.CacheCapacity(), DefaultCacheSize)
+	}
+
 	m.ClearCache()
 	if m.CacheSize() != 0 {
 		t.Errorf("After ClearCache() CacheSize() = %d, want 0", m.CacheSize())
 	}
+}
+
+func TestNewManagerWithCacheSize(t *testing.T) {
+	t.Run("custom cache size", func(t *testing.T) {
+		m := NewManagerWithCacheSize(100)
+		if m == nil {
+			t.Fatal("NewManagerWithCacheSize(100) returned nil")
+		}
+		if m.CacheCapacity() != 100 {
+			t.Errorf("CacheCapacity() = %d, want 100", m.CacheCapacity())
+		}
+	})
+
+	t.Run("zero cache size defaults", func(t *testing.T) {
+		m := NewManagerWithCacheSize(0)
+		if m == nil {
+			t.Fatal("NewManagerWithCacheSize(0) returned nil")
+		}
+		if m.CacheCapacity() != DefaultCacheSize {
+			t.Errorf("CacheCapacity() = %d, want %d (default)", m.CacheCapacity(), DefaultCacheSize)
+		}
+	})
+
+	t.Run("negative cache size defaults", func(t *testing.T) {
+		m := NewManagerWithCacheSize(-5)
+		if m == nil {
+			t.Fatal("NewManagerWithCacheSize(-5) returned nil")
+		}
+		if m.CacheCapacity() != DefaultCacheSize {
+			t.Errorf("CacheCapacity() = %d, want %d (default)", m.CacheCapacity(), DefaultCacheSize)
+		}
+	})
+}
+
+func TestManagerImpl_CacheLRUEviction(t *testing.T) {
+	// Create manager with small cache to test eviction
+	m := NewManagerWithCacheSize(3)
+
+	// Generate destinations and encode their public keys
+	var destinations []string
+	for i := 0; i < 5; i++ {
+		dest, _, err := m.Generate(SigTypeEd25519)
+		if err != nil {
+			t.Fatalf("Generate() error = %v", err)
+		}
+		encoded, err := m.EncodePublic(dest)
+		if err != nil {
+			t.Fatalf("EncodePublic() error = %v", err)
+		}
+		destinations = append(destinations, encoded)
+	}
+
+	// Parse first 3 destinations to fill cache
+	for i := 0; i < 3; i++ {
+		_, err := m.ParsePublic(destinations[i])
+		if err != nil {
+			t.Fatalf("ParsePublic() error = %v", err)
+		}
+	}
+
+	if m.CacheSize() != 3 {
+		t.Errorf("Cache should be full, size = %d, want 3", m.CacheSize())
+	}
+
+	// Parse 4th and 5th destinations - should evict oldest (LRU)
+	for i := 3; i < 5; i++ {
+		_, err := m.ParsePublic(destinations[i])
+		if err != nil {
+			t.Fatalf("ParsePublic() error = %v", err)
+		}
+	}
+
+	// Cache should still be at capacity
+	if m.CacheSize() != 3 {
+		t.Errorf("Cache should still be at capacity, size = %d, want 3", m.CacheSize())
+	}
+
+	// Verify eviction happened - oldest entries should be gone
+	// Cache should have destinations[2], destinations[3], destinations[4]
+	// Note: We can't directly check cache contents, but we verify the size
+	// stays bounded, which is the key behavior we're testing
 }
 
 func TestManagerImpl_GenerateAndEncode(t *testing.T) {

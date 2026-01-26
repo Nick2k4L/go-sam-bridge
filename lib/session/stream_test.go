@@ -226,6 +226,130 @@ func TestAcceptOptionsTimeout(t *testing.T) {
 	}
 }
 
+func TestNewStreamSessionBasic(t *testing.T) {
+	t.Run("creates stream session without I2CP dependencies", func(t *testing.T) {
+		session := NewStreamSessionBasic("test-basic", nil, nil, nil)
+
+		if session == nil {
+			t.Fatal("NewStreamSessionBasic returned nil")
+		}
+
+		if session.ID() != "test-basic" {
+			t.Errorf("expected ID 'test-basic', got %s", session.ID())
+		}
+
+		if session.Style() != StyleStream {
+			t.Errorf("expected style STREAM, got %s", session.Style())
+		}
+
+		if session.Status() != StatusCreating {
+			t.Errorf("expected status CREATING, got %s", session.Status())
+		}
+
+		// I2CP session and stream manager should be nil
+		if session.i2cpSession != nil {
+			t.Error("i2cpSession should be nil")
+		}
+
+		if session.streamManager != nil {
+			t.Error("streamManager should be nil")
+		}
+	})
+
+	t.Run("creates session with config", func(t *testing.T) {
+		cfg := &SessionConfig{FromPort: 4444, ToPort: 5555}
+		session := NewStreamSessionBasic("test-with-cfg", nil, nil, cfg)
+
+		if session.Config().FromPort != 4444 {
+			t.Errorf("expected FromPort 4444, got %d", session.Config().FromPort)
+		}
+	})
+
+	t.Run("activate transitions to active status", func(t *testing.T) {
+		session := NewStreamSessionBasic("test-activate", nil, nil, nil)
+
+		session.Activate()
+
+		if session.Status() != StatusActive {
+			t.Errorf("expected status ACTIVE after Activate(), got %s", session.Status())
+		}
+	})
+}
+
+func TestStreamSessionImpl_SetForwardConfig(t *testing.T) {
+	t.Run("set valid forward config", func(t *testing.T) {
+		session := NewStreamSessionBasic("test-fwd-cfg", nil, nil, nil)
+
+		err := session.SetForwardConfig("127.0.0.1", 8080)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		host, port := session.ForwardConfig()
+		if host != "127.0.0.1" {
+			t.Errorf("expected host '127.0.0.1', got %s", host)
+		}
+		if port != 8080 {
+			t.Errorf("expected port 8080, got %d", port)
+		}
+	})
+
+	t.Run("set edge port values", func(t *testing.T) {
+		session := NewStreamSessionBasic("test-edge", nil, nil, nil)
+
+		// Port 1 (minimum valid)
+		err := session.SetForwardConfig("localhost", 1)
+		if err != nil {
+			t.Errorf("unexpected error for port 1: %v", err)
+		}
+
+		// Port 65535 (maximum valid)
+		err = session.SetForwardConfig("localhost", 65535)
+		if err != nil {
+			t.Errorf("unexpected error for port 65535: %v", err)
+		}
+	})
+
+	t.Run("reject invalid port 0", func(t *testing.T) {
+		session := NewStreamSessionBasic("test-invalid-0", nil, nil, nil)
+
+		err := session.SetForwardConfig("localhost", 0)
+		if err == nil {
+			t.Error("expected error for port 0")
+		}
+	})
+
+	t.Run("reject invalid port -1", func(t *testing.T) {
+		session := NewStreamSessionBasic("test-invalid-neg", nil, nil, nil)
+
+		err := session.SetForwardConfig("localhost", -1)
+		if err == nil {
+			t.Error("expected error for negative port")
+		}
+	})
+
+	t.Run("reject invalid port > 65535", func(t *testing.T) {
+		session := NewStreamSessionBasic("test-invalid-large", nil, nil, nil)
+
+		err := session.SetForwardConfig("localhost", 70000)
+		if err == nil {
+			t.Error("expected error for port > 65535")
+		}
+	})
+
+	t.Run("no config returns empty values", func(t *testing.T) {
+		session := NewStreamSessionBasic("test-no-cfg", nil, nil, nil)
+
+		host, port := session.ForwardConfig()
+		if host != "" {
+			t.Errorf("expected empty host, got %s", host)
+		}
+		if port != 0 {
+			t.Errorf("expected port 0, got %d", port)
+		}
+	})
+}
+
 func TestStreamSessionImplementsInterface(t *testing.T) {
 	// Compile-time check that StreamSessionImpl implements StreamSession
 	var _ StreamSession = (*StreamSessionImpl)(nil)
