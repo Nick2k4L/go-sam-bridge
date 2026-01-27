@@ -6,10 +6,10 @@ toolchain go1.24.12
 
 require (
 	github.com/go-i2p/common v0.1.0
-	github.com/go-i2p/go-datagrams v0.0.0-20260120232136-e5cab27c098a
-	github.com/go-i2p/go-i2cp v0.1.0
+	github.com/go-i2p/go-datagrams v0.0.0-20260127191042-ac9c62c3262d
+	github.com/go-i2p/go-i2cp v0.1.1-0.20260124020217-dc6f6649a1df
 	github.com/go-i2p/go-i2p v0.1.1-0.20251217014914-4558f6b6e173
-	github.com/go-i2p/go-streaming v0.0.0-20260120210156-9469386fc621
+	github.com/go-i2p/go-streaming v0.0.0-20260127190938-144f6f599abb
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/sirupsen/logrus v1.9.4
 )
@@ -49,8 +49,8 @@ require (
 	golang.org/x/text v0.33.0 // indirect
 )
 
-replace github.com/go-i2p/go-i2cp => ../../../github.com/go-i2p/go-i2cp
+//replace github.com/go-i2p/go-i2cp => ../../../github.com/go-i2p/go-i2cp
 
-replace github.com/go-i2p/go-streaming => ../../../github.com/go-i2p/go-streaming
+//replace github.com/go-i2p/go-streaming => ../../../github.com/go-i2p/go-streaming
 
-replace github.com/go-i2p/go-datagrams => ../../../github.com/go-i2p/go-datagrams
+//replace github.com/go-i2p/go-datagrams => ../../../github.com/go-i2p/go-datagrams

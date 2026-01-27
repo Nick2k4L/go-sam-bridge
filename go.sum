@@ -22,10 +22,17 @@ github.com/go-i2p/crypto v0.1.1-0.20251212210701-124dadb97cb7 h1:6Oyo+a059Gc5/DX
 github.com/go-i2p/crypto v0.1.1-0.20251212210701-124dadb97cb7/go.mod h1:ayAu3sQu062OHtDYZv2smjlARfBQLdQHT8EtMu30ehg=
 github.com/go-i2p/elgamal v0.0.2 h1:3x2MwXWH5KjFZ06YThjLjB2/7eM3f6BsmhudKXn+dnk=
 github.com/go-i2p/elgamal v0.0.2/go.mod h1:5L85gta1c07w3f4ZCy4z//Caq1zaiHbEB8jocfQKWxM=
+github.com/go-i2p/go-datagrams v0.0.0-20260120232136-e5cab27c098a/go.mod h1:ca4FjHxi2RpJacHSH+gxM6xR3kPWnrRj8oqm4hlN8AY=
+github.com/go-i2p/go-datagrams v0.0.0-20260127191042-ac9c62c3262d h1:/5Jqn3qQiG74V1AkE9+NQPOen5l0+rYPQkweD0NGbNA=
+github.com/go-i2p/go-datagrams v0.0.0-20260127191042-ac9c62c3262d/go.mod h1:QFudE81yS9zgyzz8oHHmAL/wp2B5WDoXDQEjxrAXbTI=
+github.com/go-i2p/go-i2cp v0.1.1-0.20260124020217-dc6f6649a1df h1:g+hOG50cigO+FJCLQ+Jb/oiQRIzF1O7A4xYwXW3c04g=
+github.com/go-i2p/go-i2cp v0.1.1-0.20260124020217-dc6f6649a1df/go.mod h1:KiWgPMvhdoFH0UwA7pyScg+WvJBmSWuvKvTVMFGK7tc=
 github.com/go-i2p/go-i2p v0.1.1-0.20251217014914-4558f6b6e173 h1:I0qk5waEEW9sx6HtDV5YrWilHjdkz4BUeiXk59T71Uw=
 github.com/go-i2p/go-i2p v0.1.1-0.20251217014914-4558f6b6e173/go.mod h1:DoZF99GCBIHRR8zYFw/T58FD/h2kHKca8MUY8ptXblc=
 github.com/go-i2p/go-noise v0.1.0 h1:KBzLlSsglbTvT52ZRTOaYBUAZ5gJblR95XnmMIFX3uQ=
 github.com/go-i2p/go-noise v0.1.0/go.mod h1:1GD9rvnp5ACY00M3BDJEmi+KpQkICULp5kT+1Qwi0tI=
+github.com/go-i2p/go-streaming v0.0.0-20260127190938-144f6f599abb h1:HgusE3AQ2/2nBqZY95rlKneIJBHXsS/0X5q7qVhtbQw=
+github.com/go-i2p/go-streaming v0.0.0-20260127190938-144f6f599abb/go.mod h1:U5h+lLOWSIO7D2Tl/ackfdL4BYcMnleKoXjoGU1Qrrc=
 github.com/go-i2p/logger v0.1.0 h1:S6LIPtyoYigNDbAnx4rGHAfSVHmps++0eXAdpZJDKJY=
 github.com/go-i2p/logger v0.1.0/go.mod h1:8cnb1aRi0bAK8QgrQi5ZXKQaK7QFeZ24Cy2hokqGpAE=
 github.com/go-i2p/noise v0.0.0-20251212204422-ded862d8cdf9 h1:GB+OInR0InM9wXdHwYNBks7kGFoeov8EGwV1IQ+Mjxw=
